@@ -6,6 +6,7 @@ A Discord bot that can:
 - Show now playing stats from `https://rebootradio.uk/v3/api/stats`.
 - Parse stats JSON even when the endpoint includes PHP warning HTML before the JSON body.
 - Auto-register slash commands per server, including when the bot joins a new server.
+- In guild `1470711513097568389`, auto-create `#schedule`, post a schedule image, and keep it updated.
 
 ## Slash commands
 
@@ -13,12 +14,22 @@ A Discord bot that can:
 - `/stop` — stop and leave voice channel.
 - `/nowplaying` — show now playing data in an embed.
 
+## Special schedule automation
+
+For guild `1470711513097568389`:
+
+- Bot sends `POST` to `https://rebootradio/v3/api/getDaySlots` with `{ "offset": 0 }`.
+- Bot creates a `#schedule` text channel if needed.
+- Bot posts/edits one persistent message with a generated schedule image.
+- Channel ID and message ID are stored permanently in `data/schedule-state.json`.
+- Bot checks every minute; if timetable data changes or the live hour changes (Europe/London), it updates the message.
+- On startup, a manual check runs immediately.
+
 ## Setup
 
 1. Create a Discord bot in the Developer Portal.
-2. Enable **SERVER MEMBERS INTENT** only if your setup needs it (not required for current commands).
-3. Invite bot with permissions: View Channels, Send Messages, Connect, Speak.
-4. Install dependencies and configure env.
+2. Invite bot with permissions: View Channels, Send Messages, Connect, Speak, Manage Channels.
+3. Install dependencies and configure env.
 
 ```bash
 npm install
@@ -32,19 +43,9 @@ npm start
 - `DISCORD_TOKEN` (required)
 - `RADIO_STREAM_URL` (required)
 - `STATS_URL` (optional, defaults to `https://rebootradio.uk/v3/api/stats`)
+- `SCHEDULE_URL` (optional, defaults to `https://rebootradio/v3/api/getDaySlots`)
 
-## Notes about your stats endpoint
+## Notes
 
-Your endpoint may return HTML warnings before JSON due to upstream SSL validation failures. The bot handles this by extracting the JSON object from the response text before parsing.
-
-Example payload tail still parsed:
-
-```json
-{"presenter":{"id":-1,"name":"AutoDJ"},"song":{"artist":"","track":"RebootRadio.UK/OFFLINE"}}
-```
-
-## Production tips
-
-- Use PM2/systemd to keep the bot alive.
-- Prefer a direct stream URL (MP3/AAC) for `RADIO_STREAM_URL`.
+- Schedule image is sent as SVG (`schedule.svg`) for zero extra dependencies.
 - If stream playback fails on your host, install FFmpeg and ensure Opus libraries are available.
