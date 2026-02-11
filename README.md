@@ -18,7 +18,7 @@ A Discord bot that can:
 
 For guild `1470711513097568389`:
 
-- Bot sends `POST` to `https://rebootradio.uk/v3/api/getDaySlots` with `{ "offset": 0 }`.
+- Bot sends `POST` to `https://rebootradio.uk/v3/api/getDaySlots` with form body `offset=1` (`application/x-www-form-urlencoded`).
 - Bot creates a `#schedule` text channel if needed.
 - Bot posts/edits one persistent message with a generated `schedule.png` image.
 - Channel ID and message ID are stored permanently in `data/schedule-state.json`.

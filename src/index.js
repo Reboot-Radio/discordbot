@@ -352,15 +352,16 @@ function createSchedulePng(slots, liveSlot) {
   return canvasToPng(canvas);
 }
 
-async function fetchScheduleSlots(offset = 0) {
+async function fetchScheduleSlots(offset = 1) {
   const response = await fetch(SCHEDULE_URL, {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/json',
-      Accept: 'application/json,text/plain,*/*',
-      'User-Agent': 'RebootRadioDiscordBot/1.0',
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Accept: '*/*',
+      'Accept-Encoding': 'deflate, gzip',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36',
     },
-    body: JSON.stringify({ offset }),
+    body: new URLSearchParams({ offset: String(offset) }).toString(),
   });
 
   const body = await response.text();
@@ -426,7 +427,7 @@ async function postOrUpdateScheduleMessage(force = false) {
   if (!guild) return;
 
   const channel = await ensureScheduleChannel(guild);
-  const slots = await fetchScheduleSlots(0);
+  const slots = await fetchScheduleSlots(1);
   const liveSlot = getLiveSlotFromLondonTime();
   const scheduleHash = buildScheduleSignature(slots, liveSlot);
 
