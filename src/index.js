@@ -22,12 +22,13 @@ import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { deflateSync } from 'node:zlib';
 
 const {
   DISCORD_TOKEN,
   RADIO_STREAM_URL,
   STATS_URL = 'https://rebootradio.uk/v3/api/stats',
-  SCHEDULE_URL = 'https://rebootradio/v3/api/getDaySlots',
+  SCHEDULE_URL = 'https://rebootradio.uk/v3/api/getDaySlots',
 } = process.env;
 
 const TARGET_GUILD_ID = '1470711513097568389';
@@ -44,6 +45,54 @@ if (!DISCORD_TOKEN) {
 if (!RADIO_STREAM_URL) {
   throw new Error('Missing RADIO_STREAM_URL in environment.');
 }
+
+const FONT_5X7 = {
+  A: ['01110', '10001', '10001', '11111', '10001', '10001', '10001'],
+  B: ['11110', '10001', '10001', '11110', '10001', '10001', '11110'],
+  C: ['01111', '10000', '10000', '10000', '10000', '10000', '01111'],
+  D: ['11110', '10001', '10001', '10001', '10001', '10001', '11110'],
+  E: ['11111', '10000', '10000', '11110', '10000', '10000', '11111'],
+  F: ['11111', '10000', '10000', '11110', '10000', '10000', '10000'],
+  G: ['01111', '10000', '10000', '10011', '10001', '10001', '01110'],
+  H: ['10001', '10001', '10001', '11111', '10001', '10001', '10001'],
+  I: ['11111', '00100', '00100', '00100', '00100', '00100', '11111'],
+  J: ['00111', '00010', '00010', '00010', '00010', '10010', '01100'],
+  K: ['10001', '10010', '10100', '11000', '10100', '10010', '10001'],
+  L: ['10000', '10000', '10000', '10000', '10000', '10000', '11111'],
+  M: ['10001', '11011', '10101', '10101', '10001', '10001', '10001'],
+  N: ['10001', '11001', '10101', '10011', '10001', '10001', '10001'],
+  O: ['01110', '10001', '10001', '10001', '10001', '10001', '01110'],
+  P: ['11110', '10001', '10001', '11110', '10000', '10000', '10000'],
+  Q: ['01110', '10001', '10001', '10001', '10101', '10010', '01101'],
+  R: ['11110', '10001', '10001', '11110', '10100', '10010', '10001'],
+  S: ['01111', '10000', '10000', '01110', '00001', '00001', '11110'],
+  T: ['11111', '00100', '00100', '00100', '00100', '00100', '00100'],
+  U: ['10001', '10001', '10001', '10001', '10001', '10001', '01110'],
+  V: ['10001', '10001', '10001', '10001', '10001', '01010', '00100'],
+  W: ['10001', '10001', '10001', '10101', '10101', '10101', '01010'],
+  X: ['10001', '10001', '01010', '00100', '01010', '10001', '10001'],
+  Y: ['10001', '10001', '01010', '00100', '00100', '00100', '00100'],
+  Z: ['11111', '00001', '00010', '00100', '01000', '10000', '11111'],
+  0: ['01110', '10001', '10011', '10101', '11001', '10001', '01110'],
+  1: ['00100', '01100', '00100', '00100', '00100', '00100', '01110'],
+  2: ['01110', '10001', '00001', '00010', '00100', '01000', '11111'],
+  3: ['11110', '00001', '00001', '01110', '00001', '00001', '11110'],
+  4: ['00010', '00110', '01010', '10010', '11111', '00010', '00010'],
+  5: ['11111', '10000', '10000', '11110', '00001', '00001', '11110'],
+  6: ['01110', '10000', '10000', '11110', '10001', '10001', '01110'],
+  7: ['11111', '00001', '00010', '00100', '01000', '01000', '01000'],
+  8: ['01110', '10001', '10001', '01110', '10001', '10001', '01110'],
+  9: ['01110', '10001', '10001', '01111', '00001', '00001', '01110'],
+  ':': ['00000', '00100', '00100', '00000', '00100', '00100', '00000'],
+  '-': ['00000', '00000', '00000', '11111', '00000', '00000', '00000'],
+  '/': ['00001', '00010', '00100', '01000', '10000', '00000', '00000'],
+  '&': ['01100', '10010', '10100', '01000', '10101', '10010', '01101'],
+  '.': ['00000', '00000', '00000', '00000', '00000', '00100', '00100'],
+  "'": ['00100', '00100', '00000', '00000', '00000', '00000', '00000'],
+  '(': ['00010', '00100', '01000', '01000', '01000', '00100', '00010'],
+  ')': ['01000', '00100', '00010', '00010', '00010', '00100', '01000'],
+  ' ': ['00000', '00000', '00000', '00000', '00000', '00000', '00000'],
+};
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates],
@@ -119,18 +168,9 @@ function buildNowPlayingEmbed(stats) {
 }
 
 function toSlotArray(payload) {
-  if (Array.isArray(payload)) {
-    return payload;
-  }
-
-  if (Array.isArray(payload?.slots)) {
-    return payload.slots;
-  }
-
-  if (Array.isArray(payload?.data)) {
-    return payload.data;
-  }
-
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.slots)) return payload.slots;
+  if (Array.isArray(payload?.data)) return payload.data;
   return [];
 }
 
@@ -147,14 +187,11 @@ function getLiveSlotFromLondonTime() {
 }
 
 function buildScheduleSignature(slots, liveSlot) {
-  return createHash('sha256')
-    .update(JSON.stringify({ slots, liveSlot }))
-    .digest('hex');
+  return createHash('sha256').update(JSON.stringify({ slots, liveSlot })).digest('hex');
 }
 
 function normalizeSlot(slot, index) {
   const fallbackTitle = `Slot ${index + 1}`;
-
   if (typeof slot === 'string') {
     return { title: slot, subtitle: '' };
   }
@@ -165,52 +202,154 @@ function normalizeSlot(slot, index) {
   };
 }
 
-function createScheduleSvg(slots, liveSlot) {
+function sanitizeText(value) {
+  return String(value ?? '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9 :\-\/&.'()]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function createCanvas(width, height, color = [11, 11, 18, 255]) {
+  const data = Buffer.alloc(width * height * 4);
+  for (let i = 0; i < width * height; i += 1) {
+    const idx = i * 4;
+    data[idx] = color[0];
+    data[idx + 1] = color[1];
+    data[idx + 2] = color[2];
+    data[idx + 3] = color[3];
+  }
+  return { width, height, data };
+}
+
+function setPixel(canvas, x, y, rgba) {
+  if (x < 0 || y < 0 || x >= canvas.width || y >= canvas.height) return;
+  const idx = (y * canvas.width + x) * 4;
+  canvas.data[idx] = rgba[0];
+  canvas.data[idx + 1] = rgba[1];
+  canvas.data[idx + 2] = rgba[2];
+  canvas.data[idx + 3] = rgba[3] ?? 255;
+}
+
+function fillRect(canvas, x, y, width, height, rgba) {
+  for (let yy = y; yy < y + height; yy += 1) {
+    for (let xx = x; xx < x + width; xx += 1) {
+      setPixel(canvas, xx, yy, rgba);
+    }
+  }
+}
+
+function drawText(canvas, x, y, text, rgba, scale = 2, maxChars = 50) {
+  const cleaned = sanitizeText(text).slice(0, maxChars);
+  let cursorX = x;
+
+  for (const ch of cleaned) {
+    const glyph = FONT_5X7[ch] || FONT_5X7[' '];
+    for (let gy = 0; gy < glyph.length; gy += 1) {
+      for (let gx = 0; gx < glyph[gy].length; gx += 1) {
+        if (glyph[gy][gx] === '1') {
+          fillRect(canvas, cursorX + gx * scale, y + gy * scale, scale, scale, rgba);
+        }
+      }
+    }
+    cursorX += (5 + 1) * scale;
+  }
+}
+
+function createCrcTable() {
+  const table = new Uint32Array(256);
+  for (let n = 0; n < 256; n += 1) {
+    let c = n;
+    for (let k = 0; k < 8; k += 1) {
+      c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+    }
+    table[n] = c >>> 0;
+  }
+  return table;
+}
+
+const CRC_TABLE = createCrcTable();
+
+function crc32(buf) {
+  let c = 0xffffffff;
+  for (let i = 0; i < buf.length; i += 1) {
+    c = CRC_TABLE[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
+  }
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+function pngChunk(type, data) {
+  const typeBuf = Buffer.from(type, 'ascii');
+  const lengthBuf = Buffer.alloc(4);
+  lengthBuf.writeUInt32BE(data.length, 0);
+  const crcInput = Buffer.concat([typeBuf, data]);
+  const crcBuf = Buffer.alloc(4);
+  crcBuf.writeUInt32BE(crc32(crcInput), 0);
+  return Buffer.concat([lengthBuf, typeBuf, data, crcBuf]);
+}
+
+function canvasToPng(canvas) {
+  const { width, height, data } = canvas;
+  const rowLen = width * 4;
+  const raw = Buffer.alloc((rowLen + 1) * height);
+
+  for (let y = 0; y < height; y += 1) {
+    const rawOffset = y * (rowLen + 1);
+    raw[rawOffset] = 0;
+    data.copy(raw, rawOffset + 1, y * rowLen, (y + 1) * rowLen);
+  }
+
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 6;
+  ihdr[10] = 0;
+  ihdr[11] = 0;
+  ihdr[12] = 0;
+
+  const compressed = deflateSync(raw);
+  const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+
+  return Buffer.concat([
+    signature,
+    pngChunk('IHDR', ihdr),
+    pngChunk('IDAT', compressed),
+    pngChunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
+function createSchedulePng(slots, liveSlot) {
   const usableSlots = slots.slice(0, 24);
   const width = 1180;
   const rowHeight = 40;
-  const topPadding = 100;
-  const bottomPadding = 40;
+  const topPadding = 92;
+  const bottomPadding = 26;
   const height = topPadding + bottomPadding + usableSlots.length * rowHeight;
+  const canvas = createCanvas(width, height, [11, 11, 18, 255]);
 
-  const rows = usableSlots
-    .map((slot, index) => {
-      const slotHour = index + 1;
-      const isLive = slotHour === liveSlot;
-      const y = topPadding + index * rowHeight;
-      const timeLabel = slotHour === 24 ? '12:00 AM' : `${String(slotHour).padStart(2, '0')}:00`;
-      const normalized = normalizeSlot(slot, index);
-      const bg = isLive ? '#ff1f8f' : index % 2 === 0 ? '#181825' : '#11111b';
-      const titleColor = '#ffffff';
-      const subtitleColor = '#d7d7df';
+  drawText(canvas, 24, 18, 'REBOOTRADIO SCHEDULE', [255, 255, 255, 255], 3, 26);
+  drawText(canvas, 24, 58, 'LIVE SLOT FROM EUROPE/LONDON TIME', [184, 184, 200, 255], 2, 42);
 
-      return `
-      <rect x="20" y="${y}" width="1140" height="36" rx="6" fill="${bg}" />
-      <text x="40" y="${y + 23}" font-size="16" fill="#f9f9fb" font-family="Arial, sans-serif">${escapeXml(timeLabel)}</text>
-      <text x="170" y="${y + 20}" font-size="16" fill="${titleColor}" font-weight="700" font-family="Arial, sans-serif">${escapeXml(normalized.title)}</text>
-      <text x="170" y="${y + 33}" font-size="12" fill="${subtitleColor}" font-family="Arial, sans-serif">${escapeXml(normalized.subtitle)}</text>
-      ${isLive ? `<text x="1075" y="${y + 23}" font-size="12" fill="#ffffff" font-family="Arial, sans-serif" font-weight="700">LIVE</text>` : ''}
-      `;
-    })
-    .join('');
+  usableSlots.forEach((slot, index) => {
+    const y = topPadding + index * rowHeight;
+    const slotHour = index + 1;
+    const isLive = slotHour === liveSlot;
+    const bg = isLive ? [255, 31, 143, 255] : index % 2 === 0 ? [24, 24, 37, 255] : [17, 17, 27, 255];
+    const normalized = normalizeSlot(slot, index);
+    const timeLabel = slotHour === 24 ? '12:00 AM' : `${String(slotHour).padStart(2, '0')}:00`;
 
-  return `
-  <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
-    <rect width="100%" height="100%" fill="#0b0b12"/>
-    <text x="20" y="44" font-size="34" fill="#ffffff" font-family="Arial, sans-serif" font-weight="700">RebootRadio Schedule</text>
-    <text x="20" y="74" font-size="16" fill="#b8b8c8" font-family="Arial, sans-serif">Live slot highlighted based on Europe/London current hour</text>
-    ${rows}
-  </svg>
-  `.trim();
-}
+    fillRect(canvas, 20, y, 1140, 36, bg);
+    drawText(canvas, 34, y + 10, timeLabel, [249, 249, 251, 255], 2, 10);
+    drawText(canvas, 170, y + 8, normalized.title, [255, 255, 255, 255], 2, 55);
+    drawText(canvas, 170, y + 22, normalized.subtitle, [215, 215, 223, 255], 1, 110);
 
-function escapeXml(text) {
-  return String(text)
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&apos;');
+    if (isLive) {
+      drawText(canvas, 1088, y + 12, 'LIVE', [255, 255, 255, 255], 2, 6);
+    }
+  });
+
+  return canvasToPng(canvas);
 }
 
 async function fetchScheduleSlots(offset = 0) {
@@ -258,9 +397,7 @@ async function saveScheduleState() {
 async function ensureScheduleChannel(guild) {
   if (scheduleState.channelId) {
     const existing = await guild.channels.fetch(scheduleState.channelId).catch(() => null);
-    if (existing && existing.isTextBased()) {
-      return existing;
-    }
+    if (existing && existing.isTextBased()) return existing;
   }
 
   const byName = guild.channels.cache.find(
@@ -286,26 +423,18 @@ async function ensureScheduleChannel(guild) {
 
 async function postOrUpdateScheduleMessage(force = false) {
   const guild = await client.guilds.fetch(TARGET_GUILD_ID).catch(() => null);
-  if (!guild) {
-    return;
-  }
+  if (!guild) return;
 
   const channel = await ensureScheduleChannel(guild);
   const slots = await fetchScheduleSlots(0);
   const liveSlot = getLiveSlotFromLondonTime();
   const scheduleHash = buildScheduleSignature(slots, liveSlot);
 
-  const hasChanged =
-    force ||
-    scheduleHash !== scheduleState.lastScheduleHash ||
-    scheduleState.lastLiveSlot !== liveSlot;
+  const hasChanged = force || scheduleHash !== scheduleState.lastScheduleHash || scheduleState.lastLiveSlot !== liveSlot;
+  if (!hasChanged) return;
 
-  if (!hasChanged) {
-    return;
-  }
-
-  const svg = createScheduleSvg(slots, liveSlot);
-  const attachment = new AttachmentBuilder(Buffer.from(svg, 'utf8'), { name: 'schedule.svg' });
+  const png = createSchedulePng(slots, liveSlot);
+  const attachment = new AttachmentBuilder(png, { name: 'schedule.png' });
 
   if (scheduleState.messageId) {
     const oldMessage = await channel.messages.fetch(scheduleState.messageId).catch(() => null);
@@ -346,9 +475,7 @@ function startScheduleWatcher() {
 }
 
 async function registerGuildCommands(guildId) {
-  if (!client.user) {
-    return;
-  }
+  if (!client.user) return;
 
   await rest.put(Routes.applicationGuildCommands(client.user.id, guildId), {
     body: slashCommands,
@@ -458,9 +585,7 @@ client.on('guildCreate', async (guild) => {
 });
 
 client.on('interactionCreate', async (interaction) => {
-  if (!interaction.isChatInputCommand() || !interaction.guildId) {
-    return;
-  }
+  if (!interaction.isChatInputCommand() || !interaction.guildId) return;
 
   if (interaction.commandName === 'play') {
     await joinAndPlay(interaction);

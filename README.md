@@ -6,7 +6,7 @@ A Discord bot that can:
 - Show now playing stats from `https://rebootradio.uk/v3/api/stats`.
 - Parse stats JSON even when the endpoint includes PHP warning HTML before the JSON body.
 - Auto-register slash commands per server, including when the bot joins a new server.
-- In guild `1470711513097568389`, auto-create `#schedule`, post a schedule image, and keep it updated.
+- In guild `1470711513097568389`, auto-create `#schedule`, post a schedule PNG, and keep it updated.
 
 ## Slash commands
 
@@ -18,9 +18,9 @@ A Discord bot that can:
 
 For guild `1470711513097568389`:
 
-- Bot sends `POST` to `https://rebootradio/v3/api/getDaySlots` with `{ "offset": 0 }`.
+- Bot sends `POST` to `https://rebootradio.uk/v3/api/getDaySlots` with `{ "offset": 0 }`.
 - Bot creates a `#schedule` text channel if needed.
-- Bot posts/edits one persistent message with a generated schedule image.
+- Bot posts/edits one persistent message with a generated `schedule.png` image.
 - Channel ID and message ID are stored permanently in `data/schedule-state.json`.
 - Bot checks every minute; if timetable data changes or the live hour changes (Europe/London), it updates the message.
 - On startup, a manual check runs immediately.
@@ -43,9 +43,9 @@ npm start
 - `DISCORD_TOKEN` (required)
 - `RADIO_STREAM_URL` (required)
 - `STATS_URL` (optional, defaults to `https://rebootradio.uk/v3/api/stats`)
-- `SCHEDULE_URL` (optional, defaults to `https://rebootradio/v3/api/getDaySlots`)
+- `SCHEDULE_URL` (optional, defaults to `https://rebootradio.uk/v3/api/getDaySlots`)
 
 ## Notes
 
-- Schedule image is sent as SVG (`schedule.svg`) for zero extra dependencies.
+- Schedule image is generated as PNG in-process (no external image library dependency).
 - If stream playback fails on your host, install FFmpeg and ensure Opus libraries are available.
