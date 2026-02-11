@@ -7,12 +7,14 @@ A Discord bot that can:
 - Parse stats JSON even when the endpoint includes PHP warning HTML before the JSON body.
 - Auto-register slash commands per server, including when the bot joins a new server.
 - In guild `1470711513097568389`, auto-create `#schedule`, post a schedule PNG, and keep it updated.
+- Verify users against RebootRadio and sync linked Discord roles with `/verify`.
 
 ## Slash commands
 
 - `/play` — join your current voice channel and start streaming.
 - `/stop` — stop and leave voice channel.
 - `/nowplaying` — show now playing data in an embed.
+- `/verify` — check `fetchUser?discord_id=<id>` and sync linked roles in the official server.
 
 ## Special schedule automation
 
@@ -23,12 +25,27 @@ For guild `1470711513097568389`:
 - Bot posts/edits one persistent message with a generated `schedule.png` image.
 - Channel ID and message ID are stored permanently in `data/schedule-state.json`.
 - Bot checks every minute; if timetable data changes or the live hour changes (Europe/London), it updates the message.
+- Schedule display hours are shifted back by 1 while slot ordering remains unchanged.
 - On startup, a manual check runs immediately.
+
+## Linked role verification
+
+In the official RebootRadio guild only (`1470711513097568389`):
+
+- `/verify` sends a GET request to:
+  - `https://rebootradio.uk/v3/api/fetchUser?discord_id=<DISCORD_USER_ID>`
+- If `found` is `false`, the bot tells the user to link on the RebootRadio website.
+- If `found` is `true`:
+  - all mapped numeric roles from `roles[]` are added,
+  - mapped roles not present in `roles[]` are removed,
+  - unmapped numbers are ignored,
+  - role `0` grants `STAFF_ROLE_ID`,
+  - any found user also gets `MEMBER_ROLE_ID`.
 
 ## Setup
 
 1. Create a Discord bot in the Developer Portal.
-2. Invite bot with permissions: View Channels, Send Messages, Connect, Speak, Manage Channels.
+2. Invite bot with permissions: View Channels, Send Messages, Connect, Speak, Manage Channels, Manage Roles.
 3. Install dependencies and configure env.
 
 ```bash
@@ -44,6 +61,10 @@ npm start
 - `RADIO_STREAM_URL` (required)
 - `STATS_URL` (optional, defaults to `https://rebootradio.uk/v3/api/stats`)
 - `SCHEDULE_URL` (optional, defaults to `https://rebootradio.uk/v3/api/getDaySlots`)
+- `FETCH_USER_URL` (optional, defaults to `https://rebootradio.uk/v3/api/fetchUser`)
+- `LINKED_ROLE_MAP_JSON` (optional, JSON map of numeric role code to Discord role ID, e.g. `{"1":"123...","3":"456..."}`)
+- `STAFF_ROLE_ID` (optional, assigned when API role `0` is present)
+- `MEMBER_ROLE_ID` (optional, assigned whenever API `found` is true)
 
 ## Notes
 

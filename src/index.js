@@ -29,6 +29,10 @@ const {
   RADIO_STREAM_URL,
   STATS_URL = 'https://rebootradio.uk/v3/api/stats',
   SCHEDULE_URL = 'https://rebootradio.uk/v3/api/getDaySlots',
+  FETCH_USER_URL = 'https://rebootradio.uk/v3/api/fetchUser',
+  LINKED_ROLE_MAP_JSON = '{}',
+  STAFF_ROLE_ID = '',
+  MEMBER_ROLE_ID = '',
 } = process.env;
 
 const TARGET_GUILD_ID = '1470711513097568389';
@@ -95,7 +99,7 @@ const FONT_5X7 = {
 };
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates],
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates, GatewayIntentBits.GuildMembers],
 });
 
 const player = createAudioPlayer({
@@ -106,6 +110,16 @@ const player = createAudioPlayer({
 
 const voiceConnections = new Map();
 const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
+
+const linkedRoleMap = (() => {
+  try {
+    const parsed = JSON.parse(LINKED_ROLE_MAP_JSON);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (error) {
+    console.error('Invalid LINKED_ROLE_MAP_JSON; expected JSON object.', error);
+    return {};
+  }
+})();
 
 const scheduleState = {
   channelId: null,
@@ -118,6 +132,7 @@ const slashCommands = [
   new SlashCommandBuilder().setName('play').setDescription('Join your voice channel and play the radio stream.'),
   new SlashCommandBuilder().setName('stop').setDescription('Stop streaming and leave the voice channel.'),
   new SlashCommandBuilder().setName('nowplaying').setDescription('Show current now-playing info from stats API.'),
+  new SlashCommandBuilder().setName('verify').setDescription('Verify your RebootRadio account and sync linked roles.'),
 ].map((command) => command.toJSON());
 
 function extractJsonFromMixedBody(text) {
@@ -337,7 +352,8 @@ function createSchedulePng(slots, liveSlot) {
     const isLive = slotHour === liveSlot;
     const bg = isLive ? [255, 31, 143, 255] : index % 2 === 0 ? [24, 24, 37, 255] : [17, 17, 27, 255];
     const normalized = normalizeSlot(slot, index);
-    const timeLabel = slotHour === 24 ? '12:00 AM' : `${String(slotHour).padStart(2, '0')}:00`;
+    const displayHour24 = (slotHour + 23) % 24;
+    const timeLabel = displayHour24 === 0 ? '12:00 AM' : `${String(displayHour24).padStart(2, '0')}:00`;
 
     fillRect(canvas, 20, y, 1140, 36, bg);
     drawText(canvas, 34, y + 10, timeLabel, [249, 249, 251, 255], 2, 10);
@@ -350,6 +366,98 @@ function createSchedulePng(slots, liveSlot) {
   });
 
   return canvasToPng(canvas);
+}
+
+
+async function fetchLinkedUser(discordId) {
+  const url = new URL(FETCH_USER_URL);
+  url.searchParams.set('discord_id', discordId);
+
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: {
+      Accept: 'application/json,text/plain,*/*',
+      'User-Agent': 'RebootRadioDiscordBot/1.0',
+    },
+  });
+
+  const body = await response.text();
+  const payload = body.includes('{') ? extractJsonFromMixedBody(body) : JSON.parse(body);
+
+  if (!response.ok) {
+    throw new Error(`Fetch user request failed: ${response.status} ${response.statusText}`);
+  }
+
+  return payload;
+}
+
+async function syncLinkedRoles(member, apiRoles) {
+  const roleIdsToAdd = new Set();
+  const mappedRoleIds = new Set(Object.values(linkedRoleMap).filter(Boolean));
+
+  for (const roleNumber of apiRoles) {
+    const mappedRoleId = linkedRoleMap[String(roleNumber)];
+    if (mappedRoleId) {
+      roleIdsToAdd.add(mappedRoleId);
+    }
+  }
+
+  if (apiRoles.includes('0') && STAFF_ROLE_ID) {
+    roleIdsToAdd.add(STAFF_ROLE_ID);
+  }
+
+  if (MEMBER_ROLE_ID) {
+    roleIdsToAdd.add(MEMBER_ROLE_ID);
+  }
+
+  const currentRoleIds = new Set(member.roles.cache.map((role) => role.id));
+
+  const mappedManagedIds = new Set(mappedRoleIds);
+  if (STAFF_ROLE_ID) mappedManagedIds.add(STAFF_ROLE_ID);
+  if (MEMBER_ROLE_ID) mappedManagedIds.add(MEMBER_ROLE_ID);
+
+  const toAdd = [...roleIdsToAdd].filter((roleId) => !currentRoleIds.has(roleId));
+  const toRemove = [...mappedManagedIds].filter((roleId) => currentRoleIds.has(roleId) && !roleIdsToAdd.has(roleId));
+
+  if (toAdd.length > 0) {
+    await member.roles.add(toAdd, 'Linked role sync via /verify');
+  }
+
+  if (toRemove.length > 0) {
+    await member.roles.remove(toRemove, 'Linked role sync via /verify');
+  }
+
+  return { added: toAdd.length, removed: toRemove.length };
+}
+
+async function runVerify(interaction) {
+  if (interaction.guildId !== TARGET_GUILD_ID) {
+    await interaction.reply({
+      content: 'Linked role verification is only available in the official RebootRadio server.',
+      ephemeral: true,
+    });
+    return;
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+
+  try {
+    const result = await fetchLinkedUser(interaction.user.id);
+
+    if (!result?.found) {
+      await interaction.editReply('No linked RebootRadio account found. Please link your Discord account on the RebootRadio website first.');
+      return;
+    }
+
+    const apiRoles = Array.isArray(result.roles) ? result.roles.map((value) => String(value)) : [];
+    const member = await interaction.guild.members.fetch(interaction.user.id);
+    const syncResult = await syncLinkedRoles(member, apiRoles);
+
+    await interaction.editReply(`Verification successful. Role sync complete. Added: ${syncResult.added}, Removed: ${syncResult.removed}.`);
+  } catch (error) {
+    console.error('Verify command failed:', error);
+    await interaction.editReply('Verification failed right now. Please try again in a moment.');
+  }
 }
 
 async function fetchScheduleSlots(offset = 0) {
@@ -595,6 +703,11 @@ client.on('interactionCreate', async (interaction) => {
 
   if (interaction.commandName === 'stop') {
     await stopStreaming(interaction);
+    return;
+  }
+
+  if (interaction.commandName === 'verify') {
+    await runVerify(interaction);
     return;
   }
 
