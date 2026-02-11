@@ -296,7 +296,7 @@ function canvasToPng(canvas) {
   for (let y = 0; y < height; y += 1) {
     const rawOffset = y * (rowLen + 1);
     raw[rawOffset] = 0;
-    data.copy(raw, rawOffset + 0, y * rowLen, (y + 1) * rowLen);
+    data.copy(raw, rawOffset + 1, y * rowLen, (y + 1) * rowLen);
   }
 
   const ihdr = Buffer.alloc(13);
@@ -352,7 +352,7 @@ function createSchedulePng(slots, liveSlot) {
   return canvasToPng(canvas);
 }
 
-async function fetchScheduleSlots(offset = 1) {
+async function fetchScheduleSlots(offset = 0) {
   const response = await fetch(SCHEDULE_URL, {
     method: 'POST',
     headers: {
