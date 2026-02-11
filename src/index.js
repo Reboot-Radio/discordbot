@@ -328,7 +328,7 @@ function createSchedulePng(slots, liveSlot) {
   const height = topPadding + bottomPadding + usableSlots.length * rowHeight;
   const canvas = createCanvas(width, height, [11, 11, 18, 255]);
 
-  drawText(canvas, 24, 18, 'REBOOTR ADIO SCHEDULE', [255, 255, 255, 255], 3, 26);
+  drawText(canvas, 24, 18, 'REBOOTRADIO SCHEDULE', [255, 255, 255, 255], 3, 26);
   drawText(canvas, 24, 58, 'LIVE SLOT FROM EUROPE/LONDON TIME', [184, 184, 200, 255], 2, 42);
 
   usableSlots.forEach((slot, index) => {
@@ -427,7 +427,7 @@ async function postOrUpdateScheduleMessage(force = false) {
   if (!guild) return;
 
   const channel = await ensureScheduleChannel(guild);
-  const slots = await fetchScheduleSlots(1);
+  const slots = await fetchScheduleSlots(0);
   const liveSlot = getLiveSlotFromLondonTime();
   const scheduleHash = buildScheduleSignature(slots, liveSlot);
 
