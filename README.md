@@ -4,6 +4,7 @@ A Discord bot that can:
 
 - Join your voice channel and play your radio stream.
 - Show now playing stats from `https://rebootradio.uk/v3/api/stats`.
+- Auto-update bot status to: `PRESENTER Playing SONG By ARTIST`.
 - Parse stats JSON even when the endpoint includes PHP warning HTML before the JSON body.
 - Auto-register slash commands per server, including when the bot joins a new server.
 - In guild `1470711513097568389`, auto-create `#schedule`, post a schedule PNG, and keep it updated.

@@ -9,6 +9,7 @@ import {
   joinVoiceChannel,
 } from '@discordjs/voice';
 import {
+  ActivityType,
   AttachmentBuilder,
   ChannelType,
   Client,
@@ -41,6 +42,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const DATA_DIR = path.resolve(__dirname, '../data');
 const STATE_FILE = path.join(DATA_DIR, 'schedule-state.json');
+const PRESENCE_UPDATE_INTERVAL_MS = 60_000;
 
 if (!DISCORD_TOKEN) {
   throw new Error('Missing DISCORD_TOKEN in environment.');
@@ -180,6 +182,37 @@ function buildNowPlayingEmbed(stats) {
   }
 
   return embed;
+}
+
+
+function buildPresenceTextFromStats(stats) {
+  const presenter = stats?.presenter?.name?.trim() || 'AutoDJ';
+  const artist = stats?.song?.artist?.trim() || 'Unknown Artist';
+  const track = stats?.song?.track?.trim() || 'Unknown Song';
+  return `${presenter} Playing ${track} By ${artist}`.slice(0, 128);
+}
+
+async function updateBotPresence() {
+  if (!client.user) {
+    return;
+  }
+
+  try {
+    const stats = await getNowPlayingStats();
+    const statusText = buildPresenceTextFromStats(stats);
+    client.user.setPresence({
+      activities: [{ name: statusText, type: ActivityType.Custom }],
+      status: 'online',
+    });
+  } catch (error) {
+    console.error('Failed to update bot presence:', error);
+  }
+}
+
+function startPresenceUpdater() {
+  setInterval(async () => {
+    await updateBotPresence();
+  }, PRESENCE_UPDATE_INTERVAL_MS);
 }
 
 function toSlotArray(payload) {
@@ -673,6 +706,8 @@ client.on('ready', async () => {
     console.error('Initial manual schedule check failed:', error);
   }
 
+  await updateBotPresence();
+  startPresenceUpdater();
   startScheduleWatcher();
 });
 
