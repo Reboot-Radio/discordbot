@@ -296,7 +296,7 @@ function canvasToPng(canvas) {
   for (let y = 0; y < height; y += 1) {
     const rawOffset = y * (rowLen + 1);
     raw[rawOffset] = 0;
-    data.copy(raw, rawOffset + 1, y * rowLen, (y + 1) * rowLen);
+    data.copy(raw, rawOffset + 0, y * rowLen, (y + 1) * rowLen);
   }
 
   const ihdr = Buffer.alloc(13);
@@ -328,7 +328,7 @@ function createSchedulePng(slots, liveSlot) {
   const height = topPadding + bottomPadding + usableSlots.length * rowHeight;
   const canvas = createCanvas(width, height, [11, 11, 18, 255]);
 
-  drawText(canvas, 24, 18, 'REBOOTRADIO SCHEDULE', [255, 255, 255, 255], 3, 26);
+  drawText(canvas, 24, 18, 'REBOOTR ADIO SCHEDULE', [255, 255, 255, 255], 3, 26);
   drawText(canvas, 24, 58, 'LIVE SLOT FROM EUROPE/LONDON TIME', [184, 184, 200, 255], 2, 42);
 
   usableSlots.forEach((slot, index) => {
