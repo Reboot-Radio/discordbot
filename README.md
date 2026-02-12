@@ -16,6 +16,7 @@ A Discord bot that can:
 - `/stop` — stop and leave voice channel.
 - `/nowplaying` — show now playing data in an embed.
 - `/verify` — check `fetchUser?discord_id=<id>` and sync linked roles in the official server.
+- `/presenter` — generate an image with the live presenter plus next 2 slots and times.
 
 ## Special schedule automation
 
@@ -26,7 +27,7 @@ For guild `1470711513097568389`:
 - Bot posts/edits one persistent message with a generated `schedule.png` image.
 - Channel ID and message ID are stored permanently in `data/schedule-state.json`.
 - Bot checks every minute; if timetable data changes or the live hour changes (Europe/London), it updates the message.
-- Schedule display hours are shifted back by 1 while slot ordering remains unchanged.
+- Slot content is shifted back by 1 while hour labels stay unchanged (e.g. old 13:00 content now appears on 12:00).
 - On startup, a manual check runs immediately.
 
 ## Linked role verification

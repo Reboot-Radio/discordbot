@@ -135,6 +135,7 @@ const slashCommands = [
   new SlashCommandBuilder().setName('stop').setDescription('Stop streaming and leave the voice channel.'),
   new SlashCommandBuilder().setName('nowplaying').setDescription('Show current now-playing info from stats API.'),
   new SlashCommandBuilder().setName('verify').setDescription('Verify your RebootRadio account and sync linked roles.'),
+  new SlashCommandBuilder().setName('presenter').setDescription('Show live presenter and next 2 slots.'),
 ].map((command) => command.toJSON());
 
 function extractJsonFromMixedBody(text) {
@@ -379,14 +380,14 @@ function createSchedulePng(slots, liveSlot) {
   drawText(canvas, 24, 18, 'REBOOTRADIO SCHEDULE', [255, 255, 255, 255], 3, 26);
   drawText(canvas, 24, 58, 'LIVE SLOT FROM EUROPE/LONDON TIME', [184, 184, 200, 255], 2, 42);
 
-  usableSlots.forEach((slot, index) => {
+  usableSlots.forEach((_, index) => {
     const y = topPadding + index * rowHeight;
     const slotHour = index + 1;
     const isLive = slotHour === liveSlot;
     const bg = isLive ? [255, 31, 143, 255] : index % 2 === 0 ? [24, 24, 37, 255] : [17, 17, 27, 255];
-    const normalized = normalizeSlot(slot, index);
-    const displayHour24 = (slotHour + 23) % 24;
-    const timeLabel = displayHour24 === 0 ? '12:00 AM' : `${String(displayHour24).padStart(2, '0')}:00`;
+    const shiftedSlot = usableSlots[(index + 1) % usableSlots.length] || {};
+    const normalized = normalizeSlot(shiftedSlot, index);
+    const timeLabel = slotHour === 24 ? '12:00 AM' : `${String(slotHour).padStart(2, '0')}:00`;
 
     fillRect(canvas, 20, y, 1140, 36, bg);
     drawText(canvas, 34, y + 10, timeLabel, [249, 249, 251, 255], 2, 10);
@@ -490,6 +491,105 @@ async function runVerify(interaction) {
   } catch (error) {
     console.error('Verify command failed:', error);
     await interaction.editReply('Verification failed right now. Please try again in a moment.');
+  }
+}
+
+function resolveAvatarUrl(avatar) {
+  if (!avatar) return null;
+  if (String(avatar).startsWith('http://') || String(avatar).startsWith('https://')) return String(avatar);
+  return `https://rebootradio.uk/${String(avatar).replace(/^\/+/, '')}`;
+}
+
+function getShiftedSlot(slots, displayHour) {
+  if (!Array.isArray(slots) || slots.length === 0) return null;
+  const idx = (displayHour % slots.length);
+  return slots[idx] ?? null;
+}
+
+function formatHourLabel(hour24) {
+  if (hour24 === 0 || hour24 === 24) return '12:00 AM';
+  return `${String(hour24).padStart(2, '0')}:00`;
+}
+
+function createPresenterCardPng(liveSlot, nextSlots) {
+  const width = 1180;
+  const height = 420;
+  const canvas = createCanvas(width, height, [11, 11, 18, 255]);
+
+  fillRect(canvas, 20, 20, 1140, 120, [255, 31, 143, 255]);
+  drawText(canvas, 40, 40, 'LIVE PRESENTER', [255, 255, 255, 255], 2, 24);
+  drawText(canvas, 40, 76, `${liveSlot.time} ${liveSlot.presenter}`, [255, 255, 255, 255], 2, 68);
+  drawText(canvas, 40, 104, `AVATAR ${liveSlot.avatarUrl || 'NONE'}`, [255, 255, 255, 255], 1, 150);
+
+  drawText(canvas, 40, 170, 'NEXT SLOTS', [184, 184, 200, 255], 2, 20);
+
+  nextSlots.forEach((slot, i) => {
+    const y = 210 + i * 85;
+    fillRect(canvas, 40, y, 1100, 70, i % 2 === 0 ? [24, 24, 37, 255] : [17, 17, 27, 255]);
+    drawText(canvas, 60, y + 18, `${slot.time} ${slot.presenter}`, [255, 255, 255, 255], 2, 70);
+    drawText(canvas, 60, y + 46, `AVATAR ${slot.avatarUrl || 'NONE'}`, [215, 215, 223, 255], 1, 150);
+  });
+
+  return canvasToPng(canvas);
+}
+
+async function runPresenter(interaction) {
+  await interaction.deferReply();
+
+  try {
+    const slots = await fetchScheduleSlots(0);
+    const currentHour = Number(
+      new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Europe/London',
+        hour12: false,
+        hour: '2-digit',
+      }).format(new Date()),
+    );
+
+    const displayHour = currentHour === 0 ? 24 : currentHour;
+    const liveShifted = getShiftedSlot(slots, displayHour);
+    const next1 = getShiftedSlot(slots, displayHour + 1);
+    const next2 = getShiftedSlot(slots, displayHour + 2);
+
+    const liveData = normalizeSlot(liveShifted || {}, displayHour - 1);
+    const nextData = [next1, next2].map((slot, idx) => normalizeSlot(slot || {}, displayHour + idx));
+
+    const liveCard = {
+      time: formatHourLabel(displayHour),
+      presenter: liveData.title,
+      avatarUrl: resolveAvatarUrl(liveShifted?.avatar),
+    };
+
+    const nextCards = [
+      {
+        time: formatHourLabel((displayHour + 1) % 24),
+        presenter: nextData[0].title,
+        avatarUrl: resolveAvatarUrl(next1?.avatar),
+      },
+      {
+        time: formatHourLabel((displayHour + 2) % 24),
+        presenter: nextData[1].title,
+        avatarUrl: resolveAvatarUrl(next2?.avatar),
+      },
+    ];
+
+    const image = createPresenterCardPng(liveCard, nextCards);
+    const attachment = new AttachmentBuilder(image, { name: 'presenter.png' });
+
+    const embed = new EmbedBuilder()
+      .setTitle('Presenter Lineup')
+      .setDescription(`Live: **${liveCard.presenter}** (${liveCard.time})`)
+      .setColor(0xff0055)
+      .setTimestamp();
+
+    if (liveCard.avatarUrl) {
+      embed.setThumbnail(liveCard.avatarUrl);
+    }
+
+    await interaction.editReply({ embeds: [embed], files: [attachment] });
+  } catch (error) {
+    console.error('Presenter command failed:', error);
+    await interaction.editReply('Could not build presenter image right now.');
   }
 }
 
@@ -743,6 +843,11 @@ client.on('interactionCreate', async (interaction) => {
 
   if (interaction.commandName === 'verify') {
     await runVerify(interaction);
+    return;
+  }
+
+  if (interaction.commandName === 'presenter') {
+    await runPresenter(interaction);
     return;
   }
 
