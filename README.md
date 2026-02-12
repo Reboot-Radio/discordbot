@@ -16,7 +16,7 @@ A Discord bot that can:
 - `/stop` — stop and leave voice channel.
 - `/nowplaying` — show now playing data in an embed.
 - `/verify` — check `fetchUser?discord_id=<id>` and sync linked roles in the official server.
-- `/presenter` — generate an image with the live presenter plus next 2 slots and times.
+- `/presenter` — generate a lineup image and attach live/next presenter avatars (no embed).
 
 ## Special schedule automation
 

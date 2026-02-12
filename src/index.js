@@ -519,7 +519,6 @@ function createPresenterCardPng(liveSlot, nextSlots) {
   fillRect(canvas, 20, 20, 1140, 120, [255, 31, 143, 255]);
   drawText(canvas, 40, 40, 'LIVE PRESENTER', [255, 255, 255, 255], 2, 24);
   drawText(canvas, 40, 76, `${liveSlot.time} ${liveSlot.presenter}`, [255, 255, 255, 255], 2, 68);
-  drawText(canvas, 40, 104, `AVATAR ${liveSlot.avatarUrl || 'NONE'}`, [255, 255, 255, 255], 1, 150);
 
   drawText(canvas, 40, 170, 'NEXT SLOTS', [184, 184, 200, 255], 2, 20);
 
@@ -527,10 +526,39 @@ function createPresenterCardPng(liveSlot, nextSlots) {
     const y = 210 + i * 85;
     fillRect(canvas, 40, y, 1100, 70, i % 2 === 0 ? [24, 24, 37, 255] : [17, 17, 27, 255]);
     drawText(canvas, 60, y + 18, `${slot.time} ${slot.presenter}`, [255, 255, 255, 255], 2, 70);
-    drawText(canvas, 60, y + 46, `AVATAR ${slot.avatarUrl || 'NONE'}`, [215, 215, 223, 255], 1, 150);
   });
 
   return canvasToPng(canvas);
+}
+
+function extensionFromContentType(contentType) {
+  if (!contentType) return 'png';
+  if (contentType.includes('jpeg') || contentType.includes('jpg')) return 'jpg';
+  if (contentType.includes('webp')) return 'webp';
+  if (contentType.includes('gif')) return 'gif';
+  return 'png';
+}
+
+async function fetchAvatarAttachment(url, fileBase) {
+  if (!url) return null;
+
+  try {
+    const response = await fetch(url, {
+      headers: {
+        Accept: 'image/*,*/*',
+        'User-Agent': 'RebootRadioDiscordBot/1.0',
+      },
+    });
+
+    if (!response.ok) return null;
+
+    const arrayBuffer = await response.arrayBuffer();
+    const ext = extensionFromContentType(response.headers.get('content-type') || '');
+    return new AttachmentBuilder(Buffer.from(arrayBuffer), { name: `${fileBase}.${ext}` });
+  } catch (error) {
+    console.error(`Failed to fetch avatar image ${url}:`, error);
+    return null;
+  }
 }
 
 async function runPresenter(interaction) {
@@ -574,19 +602,24 @@ async function runPresenter(interaction) {
     ];
 
     const image = createPresenterCardPng(liveCard, nextCards);
-    const attachment = new AttachmentBuilder(image, { name: 'presenter.png' });
+    const lineupAttachment = new AttachmentBuilder(image, { name: 'presenter.png' });
 
-    const embed = new EmbedBuilder()
-      .setTitle('Presenter Lineup')
-      .setDescription(`Live: **${liveCard.presenter}** (${liveCard.time})`)
-      .setColor(0xff0055)
-      .setTimestamp();
+    const avatarAttachments = [
+      await fetchAvatarAttachment(liveCard.avatarUrl, 'live-avatar'),
+      await fetchAvatarAttachment(nextCards[0].avatarUrl, 'next1-avatar'),
+      await fetchAvatarAttachment(nextCards[1].avatarUrl, 'next2-avatar'),
+    ].filter(Boolean);
 
-    if (liveCard.avatarUrl) {
-      embed.setThumbnail(liveCard.avatarUrl);
-    }
+    const summary = [
+      `Live: ${liveCard.time} — ${liveCard.presenter}`,
+      `Next: ${nextCards[0].time} — ${nextCards[0].presenter}`,
+      `Then: ${nextCards[1].time} — ${nextCards[1].presenter}`,
+    ].join('\n');
 
-    await interaction.editReply({ embeds: [embed], files: [attachment] });
+    await interaction.editReply({
+      content: summary,
+      files: [lineupAttachment, ...avatarAttachments],
+    });
   } catch (error) {
     console.error('Presenter command failed:', error);
     await interaction.editReply('Could not build presenter image right now.');
