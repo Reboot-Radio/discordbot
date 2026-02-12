@@ -186,11 +186,22 @@ function buildNowPlayingEmbed(stats) {
 }
 
 
-function buildPresenceTextFromStats(stats) {
+function buildLiveActivityFromStats(stats) {
   const presenter = stats?.presenter?.name?.trim() || 'AutoDJ';
+  const presenterAvatar = stats?.presenter?.avatar || 'no presenter avatar';
   const artist = stats?.song?.artist?.trim() || 'Unknown Artist';
   const track = stats?.song?.track?.trim() || 'Unknown Song';
-  return `${presenter} Playing ${track} By ${artist}`.slice(0, 128);
+  const songArt = stats?.song?.art || 'no song art';
+
+  const name = `${track} — ${artist}`.slice(0, 128);
+  const state = `Live: ${presenter} | Art: ${songArt}`.slice(0, 128);
+  const details = `Presenter Avatar: ${presenterAvatar}`.slice(0, 128);
+
+  return {
+    name,
+    state,
+    details,
+  };
 }
 
 async function updateBotPresence() {
@@ -200,9 +211,18 @@ async function updateBotPresence() {
 
   try {
     const stats = await getNowPlayingStats();
-    const statusText = buildPresenceTextFromStats(stats);
+    const activity = buildLiveActivityFromStats(stats);
+
     client.user.setPresence({
-      activities: [{ name: statusText, type: ActivityType.Custom }],
+      activities: [
+        {
+          name: activity.name,
+          state: activity.state,
+          details: activity.details,
+          type: ActivityType.Streaming,
+          url: 'https://rebootradio.uk',
+        },
+      ],
       status: 'online',
     });
   } catch (error) {
