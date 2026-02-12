@@ -494,12 +494,6 @@ async function runVerify(interaction) {
   }
 }
 
-function resolveAvatarUrl(avatar) {
-  if (!avatar) return null;
-  if (String(avatar).startsWith('http://') || String(avatar).startsWith('https://')) return String(avatar);
-  return `https://rebootradio.uk/${String(avatar).replace(/^\/+/, '')}`;
-}
-
 function getShiftedSlot(slots, displayHour) {
   if (!Array.isArray(slots) || slots.length === 0) return null;
   const idx = (displayHour % slots.length);
@@ -531,36 +525,6 @@ function createPresenterCardPng(liveSlot, nextSlots) {
   return canvasToPng(canvas);
 }
 
-function extensionFromContentType(contentType) {
-  if (!contentType) return 'png';
-  if (contentType.includes('jpeg') || contentType.includes('jpg')) return 'jpg';
-  if (contentType.includes('webp')) return 'webp';
-  if (contentType.includes('gif')) return 'gif';
-  return 'png';
-}
-
-async function fetchAvatarAttachment(url, fileBase) {
-  if (!url) return null;
-
-  try {
-    const response = await fetch(url, {
-      headers: {
-        Accept: 'image/*,*/*',
-        'User-Agent': 'RebootRadioDiscordBot/1.0',
-      },
-    });
-
-    if (!response.ok) return null;
-
-    const arrayBuffer = await response.arrayBuffer();
-    const ext = extensionFromContentType(response.headers.get('content-type') || '');
-    return new AttachmentBuilder(Buffer.from(arrayBuffer), { name: `${fileBase}.${ext}` });
-  } catch (error) {
-    console.error(`Failed to fetch avatar image ${url}:`, error);
-    return null;
-  }
-}
-
 async function runPresenter(interaction) {
   await interaction.deferReply();
 
@@ -585,40 +549,25 @@ async function runPresenter(interaction) {
     const liveCard = {
       time: formatHourLabel(displayHour),
       presenter: liveData.title,
-      avatarUrl: resolveAvatarUrl(liveShifted?.avatar),
     };
 
     const nextCards = [
       {
         time: formatHourLabel((displayHour + 1) % 24),
         presenter: nextData[0].title,
-        avatarUrl: resolveAvatarUrl(next1?.avatar),
       },
       {
         time: formatHourLabel((displayHour + 2) % 24),
         presenter: nextData[1].title,
-        avatarUrl: resolveAvatarUrl(next2?.avatar),
       },
     ];
 
     const image = createPresenterCardPng(liveCard, nextCards);
     const lineupAttachment = new AttachmentBuilder(image, { name: 'presenter.png' });
 
-    const avatarAttachments = [
-      await fetchAvatarAttachment(liveCard.avatarUrl, 'live-avatar'),
-      await fetchAvatarAttachment(nextCards[0].avatarUrl, 'next1-avatar'),
-      await fetchAvatarAttachment(nextCards[1].avatarUrl, 'next2-avatar'),
-    ].filter(Boolean);
-
-    const summary = [
-      `Live: ${liveCard.time} — ${liveCard.presenter}`,
-      `Next: ${nextCards[0].time} — ${nextCards[0].presenter}`,
-      `Then: ${nextCards[1].time} — ${nextCards[1].presenter}`,
-    ].join('\n');
-
     await interaction.editReply({
-      content: summary,
-      files: [lineupAttachment, ...avatarAttachments],
+      content: '',
+      files: [lineupAttachment],
     });
   } catch (error) {
     console.error('Presenter command failed:', error);
