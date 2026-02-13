@@ -131,7 +131,7 @@ const scheduleState = {
 };
 
 const slashCommands = [
-  new SlashCommandBuilder().setName('play').setDescription('Join your voice channel and play the radio stream.'),
+  new SlashCommandBuilder().setName('play').setDescription('Join your voice channel and play Reboot Radio.'),
   new SlashCommandBuilder().setName('stop').setDescription('Stop streaming and leave the voice channel.'),
   new SlashCommandBuilder().setName('nowplaying').setDescription('Show current now-playing info from stats API.'),
   new SlashCommandBuilder().setName('verify').setDescription('Verify your RebootRadio account and sync linked roles.'),
@@ -187,7 +187,7 @@ function buildNowPlayingEmbed(stats) {
 
 
 function buildPresenceTextFromStats(stats) {
-  const presenter = stats?.presenter?.name?.trim() || 'AutoDJ';
+  const presenter = stats?.presenter?.name?.trim() || 'Rebot';
   const artist = stats?.song?.artist?.trim() || 'Unknown Artist';
   const track = stats?.song?.track?.trim() || 'Unknown Song';
   return `${presenter} Playing ${track} By ${artist}`.slice(0, 128);
@@ -745,12 +745,12 @@ async function joinAndPlay(interaction) {
     connection.subscribe(player);
     voiceConnections.set(interaction.guildId, connection);
 
-    await interaction.reply(`Connected to **${channel.name}** and streaming your station.`);
+    await interaction.reply(`Connected to **${channel.name}** and streaming Reboot Radio.`);
   } catch (error) {
     connection.destroy();
     voiceConnections.delete(interaction.guildId);
     console.error('Failed to join or stream:', error);
-    await interaction.reply('I could not connect/play the station. Check stream URL and ffmpeg/opus support on host.');
+    await interaction.reply('I could not connect/play the station. Contact developer for support..');
   }
 }
 
