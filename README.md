@@ -4,7 +4,7 @@ A Discord bot that can:
 
 - Join your voice channel and play your radio stream.
 - Show now playing stats from `https://rebootradio.uk/v3/api/stats`.
-- Auto-update bot now-playing using rich presence style activity (Playing): name = song title, details = artist, state = live presenter, large image = song art, and profile/website buttons.
+- Auto-update bot status to: `PRESENTER Playing SONG By ARTIST`.
 - Parse stats JSON even when the endpoint includes PHP warning HTML before the JSON body.
 - Auto-register slash commands per server, including when the bot joins a new server.
 - In guild `1470711513097568389`, auto-create `#schedule`, post a schedule PNG, and keep it updated.
@@ -63,7 +63,6 @@ npm start
 - `RADIO_STREAM_URL` (required)
 - `STATS_URL` (optional, defaults to `https://rebootradio.uk/v3/api/stats`)
 - `SCHEDULE_URL` (optional, defaults to `https://rebootradio.uk/v3/api/getDaySlots`)
-- `MINI_TIMETABLE_URL` (optional, defaults to `https://rebootradio.uk/v3/api/miniTimetable`)
 - `FETCH_USER_URL` (optional, defaults to `https://rebootradio.uk/v3/api/fetchUser`)
 - `LINKED_ROLE_MAP_JSON` (optional, JSON map of numeric role code to Discord role ID, e.g. `{"1":"123...","3":"456..."}`)
 - `STAFF_ROLE_ID` (optional, assigned when API role `0` is present)
