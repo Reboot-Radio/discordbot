@@ -30,6 +30,7 @@ const {
   RADIO_STREAM_URL,
   STATS_URL = 'https://rebootradio.uk/v3/api/stats',
   SCHEDULE_URL = 'https://rebootradio.uk/v3/api/getDaySlots',
+  MINI_TIMETABLE_URL = 'https://rebootradio.uk/v3/api/miniTimetable',
   FETCH_USER_URL = 'https://rebootradio.uk/v3/api/fetchUser',
   LINKED_ROLE_MAP_JSON = '{}',
   STAFF_ROLE_ID = '',
@@ -165,6 +166,35 @@ async function getNowPlayingStats() {
   return extractJsonFromMixedBody(body);
 }
 
+async function getMiniTimetable() {
+  const response = await fetch(MINI_TIMETABLE_URL, {
+    headers: {
+      'User-Agent': 'RebootRadioDiscordBot/1.0',
+      Accept: 'application/json,text/plain,*/*',
+    },
+  });
+
+  const body = await response.text();
+  const payload = body.includes('{') ? extractJsonFromMixedBody(body) : JSON.parse(body);
+
+  if (!response.ok) {
+    throw new Error(`Mini timetable request failed: ${response.status} ${response.statusText}`);
+  }
+
+  return Array.isArray(payload?.slots) ? payload.slots : [];
+}
+
+function toAbsoluteAssetUrl(url) {
+  if (!url) return null;
+  if (String(url).startsWith('http://') || String(url).startsWith('https://')) return String(url);
+  return `https://rebootradio.uk/${String(url).replace(/^\/+/, '')}`;
+}
+
+function getLiveMiniSlot(slots) {
+  const nowSec = Math.floor(Date.now() / 1000);
+  return slots.find((slot) => nowSec >= Number(slot?.timestamp_start) && nowSec < Number(slot?.timestamp_end)) || null;
+}
+
 function buildNowPlayingEmbed(stats) {
   const presenter = stats?.presenter?.name || 'Unknown';
   const artist = stats?.song?.artist || 'Unknown artist';
@@ -186,20 +216,46 @@ function buildNowPlayingEmbed(stats) {
 }
 
 
-function buildLiveActivityFromStats(stats) {
-  const presenter = stats?.presenter?.name?.trim() || 'AutoDJ';
+function buildLiveActivityFromStats(stats, liveMiniSlot) {
+  const presenter = liveMiniSlot?.name?.trim() || stats?.presenter?.name?.trim() || 'AutoDJ';
+  const presenterId = Number(liveMiniSlot?.userId);
   const artist = stats?.song?.artist?.trim() || 'Unknown Artist';
   const track = stats?.song?.track?.trim() || 'Unknown Song';
-  const songArt = stats?.song?.art || 'no song art';
+  const songArt = toAbsoluteAssetUrl(stats?.song?.art);
+  const album = stats?.song?.album?.trim() || null;
+  const presenterAvatar = toAbsoluteAssetUrl(liveMiniSlot?.avatar);
 
-  const name = 'RebootRadio'.slice(0, 128);
-  const state = `Live: ${presenter} | Art: ${songArt}`.slice(0, 128);
-  const details = `${track} — ${artist}`.slice(0, 128);
+  const name = track.slice(0, 128);
+  const state = presenter.slice(0, 128);
+  const details = artist.slice(0, 128);
+
+  const buttons = [{ label: 'Website', url: 'https://rebootradio.uk/v3' }];
+  const presenterIsBot = presenterId === -1 || presenter.toLowerCase() === 'rebot';
+  const presenterProfileUrl = Number.isFinite(presenterId)
+    ? `https://rebootradio.uk/v3/profile&id=${presenterId}`
+    : null;
+
+  if (!presenterIsBot && presenterProfileUrl) {
+    if (presenterId < 0) {
+      buttons.splice(0, buttons.length, { label: presenter.slice(0, 32), url: presenterProfileUrl });
+    } else {
+      buttons.push({ label: presenter.slice(0, 32), url: presenterProfileUrl });
+    }
+  }
+
+  const assets = {
+    large_image: songArt || undefined,
+    large_text: (album || track).slice(0, 128),
+    small_image: presenterId < 0 && presenterId !== -1 ? undefined : presenterAvatar || undefined,
+    small_text: presenter.slice(0, 128),
+  };
 
   return {
     name,
     state,
     details,
+    assets,
+    buttons,
   };
 }
 
@@ -210,7 +266,9 @@ async function updateBotPresence() {
 
   try {
     const stats = await getNowPlayingStats();
-    const activity = buildLiveActivityFromStats(stats);
+    const miniSlots = await getMiniTimetable();
+    const liveMiniSlot = getLiveMiniSlot(miniSlots);
+    const activity = buildLiveActivityFromStats(stats, liveMiniSlot);
 
     client.user.setPresence({
       activities: [
@@ -219,6 +277,11 @@ async function updateBotPresence() {
           state: activity.state,
           details: activity.details,
           type: ActivityType.Playing,
+          assets: activity.assets,
+          buttons: activity.buttons,
+          timestamps: {
+            start: Date.now(),
+          },
         },
       ],
       status: 'online',
