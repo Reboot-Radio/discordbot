@@ -188,14 +188,13 @@ function buildNowPlayingEmbed(stats) {
 
 function buildLiveActivityFromStats(stats) {
   const presenter = stats?.presenter?.name?.trim() || 'AutoDJ';
-  const presenterAvatar = stats?.presenter?.avatar || 'no presenter avatar';
   const artist = stats?.song?.artist?.trim() || 'Unknown Artist';
   const track = stats?.song?.track?.trim() || 'Unknown Song';
   const songArt = stats?.song?.art || 'no song art';
 
-  const name = `${track} — ${artist}`.slice(0, 128);
+  const name = 'RebootRadio'.slice(0, 128);
   const state = `Live: ${presenter} | Art: ${songArt}`.slice(0, 128);
-  const details = `Presenter Avatar: ${presenterAvatar}`.slice(0, 128);
+  const details = `${track} — ${artist}`.slice(0, 128);
 
   return {
     name,
@@ -219,8 +218,7 @@ async function updateBotPresence() {
           name: activity.name,
           state: activity.state,
           details: activity.details,
-          type: ActivityType.Streaming,
-          url: 'https://rebootradio.uk',
+          type: ActivityType.Playing,
         },
       ],
       status: 'online',
