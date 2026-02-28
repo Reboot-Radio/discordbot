@@ -802,12 +802,12 @@ async function joinAndPlay(interaction) {
     connection.subscribe(player);
     voiceConnections.set(interaction.guildId, connection);
 
-    await interaction.reply(`Connected to **${channel.name}** and streaming your station.`);
+    await interaction.reply(`Connected to **${channel.name}** and streaming Reboot Radio.`);
   } catch (error) {
     connection.destroy();
     voiceConnections.delete(interaction.guildId);
     console.error('Failed to join or stream:', error);
-    await interaction.reply('I could not connect/play the station. Check stream URL and ffmpeg/opus support on host.');
+    await interaction.reply('I could not connect/play the station. Contact developer for support..');
   }
 }
 
