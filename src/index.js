@@ -2,6 +2,7 @@ import 'dotenv/config';
 import {
   AudioPlayerStatus,
   NoSubscriberBehavior,
+  StreamType,
   VoiceConnectionStatus,
   createAudioPlayer,
   createAudioResource,
@@ -19,6 +20,7 @@ import {
   Routes,
   SlashCommandBuilder,
 } from 'discord.js';
+import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
@@ -43,6 +45,7 @@ const __dirname = path.dirname(__filename);
 const DATA_DIR = path.resolve(__dirname, '../data');
 const STATE_FILE = path.join(DATA_DIR, 'schedule-state.json');
 const PRESENCE_UPDATE_INTERVAL_MS = 60_000;
+const STREAM_USER_AGENT = 'RebootRadioBotByRebootMedia Group';
 
 if (!DISCORD_TOKEN) {
   throw new Error('Missing DISCORD_TOKEN in environment.');
@@ -130,8 +133,64 @@ const scheduleState = {
   lastLiveSlot: null,
 };
 
+
+const ffmpegProcesses = new Map();
+
+function stopGuildFfmpeg(guildId) {
+  const processRef = ffmpegProcesses.get(guildId);
+  if (!processRef) return;
+
+  try {
+    processRef.kill('SIGKILL');
+  } catch (error) {
+    console.error(`Failed to kill ffmpeg process for guild ${guildId}:`, error);
+  }
+
+  ffmpegProcesses.delete(guildId);
+}
+
+function createFfmpegAudioResource(guildId) {
+  stopGuildFfmpeg(guildId);
+
+  const ffmpeg = spawn('ffmpeg', [
+    '-hide_banner',
+    '-loglevel',
+    'warning',
+    '-user_agent',
+    STREAM_USER_AGENT,
+    '-i',
+    RADIO_STREAM_URL,
+    '-f',
+    's16le',
+    '-ar',
+    '48000',
+    '-ac',
+    '2',
+    'pipe:1',
+  ], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  ffmpeg.stderr.on('data', (chunk) => {
+    const message = chunk.toString().trim();
+    if (message) {
+      console.error(`[ffmpeg:${guildId}] ${message}`);
+    }
+  });
+
+  ffmpeg.on('close', () => {
+    ffmpegProcesses.delete(guildId);
+  });
+
+  ffmpegProcesses.set(guildId, ffmpeg);
+
+  return createAudioResource(ffmpeg.stdout, {
+    inputType: StreamType.Raw,
+  });
+}
+
 const slashCommands = [
-  new SlashCommandBuilder().setName('play').setDescription('Join your voice channel and play Reboot Radio.'),
+  new SlashCommandBuilder().setName('play').setDescription('Join your voice channel and play the radio stream.'),
   new SlashCommandBuilder().setName('stop').setDescription('Stop streaming and leave the voice channel.'),
   new SlashCommandBuilder().setName('nowplaying').setDescription('Show current now-playing info from stats API.'),
   new SlashCommandBuilder().setName('verify').setDescription('Verify your RebootRadio account and sync linked roles.'),
@@ -187,7 +246,7 @@ function buildNowPlayingEmbed(stats) {
 
 
 function buildPresenceTextFromStats(stats) {
-  const presenter = stats?.presenter?.name?.trim() || 'Rebot';
+  const presenter = stats?.presenter?.name?.trim() || 'AutoDJ';
   const artist = stats?.song?.artist?.trim() || 'Unknown Artist';
   const track = stats?.song?.track?.trim() || 'Unknown Song';
   return `${presenter} Playing ${track} By ${artist}`.slice(0, 128);
@@ -737,9 +796,7 @@ async function joinAndPlay(interaction) {
   try {
     await entersState(connection, VoiceConnectionStatus.Ready, 20_000);
 
-    const resource = createAudioResource(RADIO_STREAM_URL, {
-      inlineVolume: false,
-    });
+    const resource = createFfmpegAudioResource(interaction.guildId);
 
     player.play(resource);
     connection.subscribe(player);
@@ -763,6 +820,7 @@ async function stopStreaming(interaction) {
   }
 
   player.stop(true);
+  stopGuildFfmpeg(interaction.guildId);
   connection.destroy();
   voiceConnections.delete(interaction.guildId);
 
@@ -857,7 +915,7 @@ player.on(AudioPlayerStatus.Idle, () => {
     if (connection.state.status === VoiceConnectionStatus.Ready) {
       try {
         connection.subscribe(player);
-        player.play(createAudioResource(RADIO_STREAM_URL));
+        player.play(createFfmpegAudioResource(guildId));
       } catch (error) {
         console.error(`Failed to restart stream for guild ${guildId}:`, error);
       }

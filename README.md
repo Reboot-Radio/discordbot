@@ -71,4 +71,5 @@ npm start
 ## Notes
 
 - Schedule image is generated as PNG in-process (no external image library dependency).
+- Stream playback uses FFmpeg piping with custom user-agent `RebootRadioBotByRebootMedia Group`.
 - If stream playback fails on your host, install FFmpeg and ensure Opus libraries are available.
