@@ -766,22 +766,37 @@ async function registerGuildCommands(guildId) {
   });
 }
 
+
+async function respondToInteraction(interaction, payload) {
+  const responsePayload = typeof payload === 'string' ? { content: payload } : payload;
+
+  try {
+    if (interaction.deferred || interaction.replied) {
+      await interaction.editReply(responsePayload);
+    } else {
+      await interaction.reply(responsePayload);
+    }
+  } catch (error) {
+    console.error('Failed to respond to interaction:', error);
+  }
+}
+
 async function joinAndPlay(interaction) {
+  await interaction.deferReply();
+
   const channel = interaction.member?.voice?.channel;
 
   if (!channel) {
-    await interaction.reply({
+    await respondToInteraction(interaction, {
       content: 'Join a voice channel first, then run this command.',
-      ephemeral: true,
     });
     return;
   }
 
   const existingConnection = voiceConnections.get(interaction.guildId);
   if (existingConnection && existingConnection.state.status !== VoiceConnectionStatus.Destroyed) {
-    await interaction.reply({
+    await respondToInteraction(interaction, {
       content: 'Already connected and playing. Use `/stop` first if you want me to reconnect.',
-      ephemeral: true,
     });
     return;
   }
@@ -802,12 +817,12 @@ async function joinAndPlay(interaction) {
     connection.subscribe(player);
     voiceConnections.set(interaction.guildId, connection);
 
-    await interaction.reply(`Connected to **${channel.name}** and streaming Reboot Radio.`);
+    await respondToInteraction(interaction, `Connected to **${channel.name}** and streaming your station.`);
   } catch (error) {
     connection.destroy();
     voiceConnections.delete(interaction.guildId);
     console.error('Failed to join or stream:', error);
-    await interaction.reply('I could not connect/play the station. Contact developer for support..');
+    await respondToInteraction(interaction, 'I could not connect/play the station. Check stream URL and ffmpeg/opus support on host.');
   }
 }
 
@@ -827,7 +842,7 @@ async function stopStreaming(interaction) {
   await interaction.reply('Stopped stream and left voice channel.');
 }
 
-client.on('ready', async () => {
+client.on('clientReady', async () => {
   console.log(`Logged in as ${client.user.tag}`);
 
   await loadScheduleState();
