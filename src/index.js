@@ -3,6 +3,7 @@ import {
   AudioPlayerStatus,
   NoSubscriberBehavior,
   StreamType,
+  VoiceConnectionDisconnectReason,
   VoiceConnectionStatus,
   createAudioPlayer,
   createAudioResource,
@@ -782,33 +783,56 @@ async function respondToInteraction(interaction, payload) {
 }
 
 
-async function establishVoiceConnection(channel) {
-  const attempts = [20_000, 45_000];
-  let lastError = null;
+function stabilizeVoiceConnection(connection, guildId) {
+  connection.on('error', (error) => {
+    console.error(`Voice connection error (${guildId}):`, error);
+  });
 
-  for (let index = 0; index < attempts.length; index += 1) {
-    const timeoutMs = attempts[index];
-    const connection = joinVoiceChannel({
-      channelId: channel.id,
-      guildId: channel.guild.id,
-      adapterCreator: channel.guild.voiceAdapterCreator,
-      selfDeaf: true,
-    });
+  connection.on('stateChange', (oldState, newState) => {
+    const networking = Reflect.get(newState, 'networking');
+    const udp = networking?.udp;
 
-    try {
-      await entersState(connection, VoiceConnectionStatus.Ready, timeoutMs);
-      return connection;
-    } catch (error) {
-      lastError = error;
-      connection.destroy();
+    if (udp?.keepAliveInterval) {
+      clearInterval(udp.keepAliveInterval);
+      udp.keepAliveInterval = null;
+    }
 
-      if (index < attempts.length - 1) {
-        await new Promise((resolve) => setTimeout(resolve, 1_500));
+    if (newState.status === VoiceConnectionStatus.Disconnected) {
+      if (newState.reason === VoiceConnectionDisconnectReason.WebSocketClose && newState.closeCode === 4014) {
+        connection.destroy();
+        voiceConnections.delete(guildId);
       }
     }
-  }
 
-  throw lastError;
+    if (oldState.status !== newState.status) {
+      console.log(`Voice state (${guildId}): ${oldState.status} -> ${newState.status}`);
+    }
+  });
+}
+
+async function establishVoiceConnection(channel) {
+  const connection = joinVoiceChannel({
+    channelId: channel.id,
+    guildId: channel.guild.id,
+    adapterCreator: channel.guild.voiceAdapterCreator,
+    selfDeaf: true,
+  });
+
+  stabilizeVoiceConnection(connection, channel.guild.id);
+
+  try {
+    await entersState(connection, VoiceConnectionStatus.Ready, 30_000);
+    return connection;
+  } catch (firstError) {
+    try {
+      connection.rejoin();
+      await entersState(connection, VoiceConnectionStatus.Ready, 30_000);
+      return connection;
+    } catch (secondError) {
+      connection.destroy();
+      throw secondError || firstError;
+    }
+  }
 }
 
 async function joinAndPlay(interaction) {
