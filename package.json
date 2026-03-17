@@ -1,0 +1,19 @@
+{
+  "name": "rebootradio-discord-bot",
+  "version": "1.0.0",
+  "description": "Discord bot to play a radio stream and show now playing stats",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "check": "node --check src/index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@discordjs/voice": "^0.18.0",
+    "discord.js": "^14.16.3",
+    "dotenv": "^16.4.5"
+  }
+}
