@@ -72,4 +72,5 @@ npm start
 
 - Schedule image is generated as PNG in-process (no external image library dependency).
 - Stream playback uses FFmpeg piping with custom user-agent `RebootRadioBotByRebootMedia Group`.
+- Voice join now retries with extended readiness timeout (20s then 45s) to reduce intermittent `AbortError` failures on slower hosts/networks.
 - If stream playback fails on your host, install FFmpeg and ensure Opus libraries are available.

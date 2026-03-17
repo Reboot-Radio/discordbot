@@ -781,6 +781,36 @@ async function respondToInteraction(interaction, payload) {
   }
 }
 
+
+async function establishVoiceConnection(channel) {
+  const attempts = [20_000, 45_000];
+  let lastError = null;
+
+  for (let index = 0; index < attempts.length; index += 1) {
+    const timeoutMs = attempts[index];
+    const connection = joinVoiceChannel({
+      channelId: channel.id,
+      guildId: channel.guild.id,
+      adapterCreator: channel.guild.voiceAdapterCreator,
+      selfDeaf: true,
+    });
+
+    try {
+      await entersState(connection, VoiceConnectionStatus.Ready, timeoutMs);
+      return connection;
+    } catch (error) {
+      lastError = error;
+      connection.destroy();
+
+      if (index < attempts.length - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 1_500));
+      }
+    }
+  }
+
+  throw lastError;
+}
+
 async function joinAndPlay(interaction) {
   await interaction.deferReply();
 
@@ -801,15 +831,10 @@ async function joinAndPlay(interaction) {
     return;
   }
 
-  const connection = joinVoiceChannel({
-    channelId: channel.id,
-    guildId: channel.guild.id,
-    adapterCreator: channel.guild.voiceAdapterCreator,
-    selfDeaf: true,
-  });
+  let connection;
 
   try {
-    await entersState(connection, VoiceConnectionStatus.Ready, 20_000);
+    connection = await establishVoiceConnection(channel);
 
     const resource = createFfmpegAudioResource(interaction.guildId);
 
@@ -819,10 +844,20 @@ async function joinAndPlay(interaction) {
 
     await respondToInteraction(interaction, `Connected to **${channel.name}** and streaming your station.`);
   } catch (error) {
-    connection.destroy();
+    if (connection) {
+      connection.destroy();
+    }
     voiceConnections.delete(interaction.guildId);
-    console.error('Failed to join or stream:', error);
-    await respondToInteraction(interaction, 'I could not connect/play the station. Check stream URL and ffmpeg/opus support on host.');
+
+    const briefError = error?.code === 'ABORT_ERR'
+      ? 'Voice gateway timed out while connecting.'
+      : error?.message || 'Unknown connection error';
+
+    console.error(`Failed to join or stream (${interaction.guildId}): ${briefError}`);
+    await respondToInteraction(
+      interaction,
+      'I could not connect/play the station (voice connection timeout). Check bot voice permissions, UDP/voice networking on host, and ffmpeg availability.',
+    );
   }
 }
 
