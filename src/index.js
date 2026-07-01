@@ -27,33 +27,39 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { deflateSync } from 'node:zlib';
-
-const {
+import {
   DISCORD_TOKEN,
+  FEATURE_ROLE_MAP,
+  LINKED_ROLE_MAP,
+  MEMBER_ROLE_ID,
+  PRESENCE_UPDATE_INTERVAL_MS,
   RADIO_STREAM_URL,
-  STATS_URL = 'https://rebootradio.uk/v3/api/stats',
-  SCHEDULE_URL = 'https://rebootradio.uk/v3/api/getDaySlots',
-  FETCH_USER_URL = 'https://rebootradio.uk/v3/api/fetchUser',
-  LINKED_ROLE_MAP_JSON = '{}',
-  STAFF_ROLE_ID = '',
-  MEMBER_ROLE_ID = '',
-} = process.env;
+  SCHEDULE_CHANNEL_NAME,
+  SETTINGS_URL,
+  STAFF_ROLE_ID,
+  STREAM_USER_AGENT,
+  TARGET_GUILD_ID,
+} from './config.js';
+import {
+  buildPresenceText,
+  fetchLinkedUser,
+  fetchScheduleSlots,
+  fetchStations,
+  getNowPlayingStats,
+  parseStatsDisplay,
+  resolveStreamUrl,
+  toSlotArray,
+} from './siteApi.js';
 
-const TARGET_GUILD_ID = '1470711513097568389';
-const SCHEDULE_CHANNEL_NAME = 'schedule';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const DATA_DIR = path.resolve(__dirname, '../data');
 const STATE_FILE = path.join(DATA_DIR, 'schedule-state.json');
-const PRESENCE_UPDATE_INTERVAL_MS = 60_000;
-const STREAM_USER_AGENT = 'RebootRadioBotByRebootMedia Group';
+
+let activeStreamUrl = RADIO_STREAM_URL;
 
 if (!DISCORD_TOKEN) {
   throw new Error('Missing DISCORD_TOKEN in environment.');
-}
-
-if (!RADIO_STREAM_URL) {
-  throw new Error('Missing RADIO_STREAM_URL in environment.');
 }
 
 const FONT_5X7 = {
@@ -117,15 +123,8 @@ const player = createAudioPlayer({
 const voiceConnections = new Map();
 const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
 
-const linkedRoleMap = (() => {
-  try {
-    const parsed = JSON.parse(LINKED_ROLE_MAP_JSON);
-    return parsed && typeof parsed === 'object' ? parsed : {};
-  } catch (error) {
-    console.error('Invalid LINKED_ROLE_MAP_JSON; expected JSON object.', error);
-    return {};
-  }
-})();
+const linkedRoleMap = LINKED_ROLE_MAP;
+const featureRoleMap = FEATURE_ROLE_MAP;
 
 const scheduleState = {
   channelId: null,
@@ -160,7 +159,7 @@ function createFfmpegAudioResource(guildId) {
     '-user_agent',
     STREAM_USER_AGENT,
     '-i',
-    RADIO_STREAM_URL,
+    RADIO_STREAM_URL || activeStreamUrl,
     '-f',
     's16le',
     '-ar',
@@ -196,61 +195,37 @@ const slashCommands = [
   new SlashCommandBuilder().setName('nowplaying').setDescription('Show current now-playing info from stats API.'),
   new SlashCommandBuilder().setName('verify').setDescription('Verify your RebootRadio account and sync linked roles.'),
   new SlashCommandBuilder().setName('presenter').setDescription('Show live presenter and next 2 slots.'),
+  new SlashCommandBuilder().setName('stations').setDescription('List available RebootRadio stations.'),
 ].map((command) => command.toJSON());
 
-function extractJsonFromMixedBody(text) {
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start === -1 || end === -1 || end <= start) {
-    throw new Error('No JSON object found in response body.');
-  }
-
-  return JSON.parse(text.slice(start, end + 1));
-}
-
-async function getNowPlayingStats() {
-  const response = await fetch(STATS_URL, {
-    headers: {
-      'User-Agent': 'RebootRadioDiscordBot/1.0',
-      Accept: 'application/json,text/plain,*/*',
-    },
-  });
-
-  const body = await response.text();
-
-  if (!response.ok && !body.includes('{')) {
-    throw new Error(`Stats request failed: ${response.status} ${response.statusText}`);
-  }
-
-  return extractJsonFromMixedBody(body);
-}
-
 function buildNowPlayingEmbed(stats) {
-  const presenter = stats?.presenter?.name || 'Unknown';
-  const artist = stats?.song?.artist || 'Unknown artist';
-  const track = stats?.song?.track || 'Unknown track';
-  const coverArt = stats?.song?.art || stats?.presenter?.avatar || null;
-
+  const display = parseStatsDisplay(stats);
   const embed = new EmbedBuilder()
     .setTitle('RebootRadio — Now Playing')
-    .setDescription(`**${track}**\nby *${artist}*`)
-    .addFields({ name: 'Presenter', value: presenter, inline: true })
-    .setColor(0xff0055)
+    .setColor(display.isLive ? 0xff3355 : 0xff0055)
     .setTimestamp();
 
-  if (coverArt?.startsWith('http')) {
-    embed.setThumbnail(coverArt);
+  if (display.isLive) {
+    embed
+      .setDescription('**Live on air**')
+      .addFields(
+        { name: 'Presenter', value: display.presenter, inline: true },
+        { name: 'Station', value: display.station, inline: true },
+      );
+  } else {
+    embed
+      .setDescription(`**${display.track}**\nby *${display.artist}*`)
+      .addFields(
+        { name: 'Presenter', value: display.presenter, inline: true },
+        { name: 'Station', value: display.station, inline: true },
+      );
+  }
+
+  if (display.art) {
+    embed.setThumbnail(display.art);
   }
 
   return embed;
-}
-
-
-function buildPresenceTextFromStats(stats) {
-  const presenter = stats?.presenter?.name?.trim() || 'AutoDJ';
-  const artist = stats?.song?.artist?.trim() || 'Unknown Artist';
-  const track = stats?.song?.track?.trim() || 'Unknown Song';
-  return `${presenter} Playing ${track} By ${artist}`.slice(0, 128);
 }
 
 async function updateBotPresence() {
@@ -260,7 +235,7 @@ async function updateBotPresence() {
 
   try {
     const stats = await getNowPlayingStats();
-    const statusText = buildPresenceTextFromStats(stats);
+    const statusText = buildPresenceText(stats);
 
     client.user.setPresence({
       activities: [{ name: statusText, type: ActivityType.Custom }],
@@ -275,13 +250,6 @@ function startPresenceUpdater() {
   setInterval(async () => {
     await updateBotPresence();
   }, PRESENCE_UPDATE_INTERVAL_MS);
-}
-
-function toSlotArray(payload) {
-  if (Array.isArray(payload)) return payload;
-  if (Array.isArray(payload?.slots)) return payload.slots;
-  if (Array.isArray(payload?.data)) return payload.data;
-  return [];
 }
 
 function getLiveSlotFromLondonTime() {
@@ -463,35 +431,20 @@ function createSchedulePng(slots, liveSlot) {
   return canvasToPng(canvas);
 }
 
-
-async function fetchLinkedUser(discordId) {
-  const url = new URL(FETCH_USER_URL);
-  url.searchParams.set('discord_id', discordId);
-
-  const response = await fetch(url, {
-    method: 'GET',
-    headers: {
-      Accept: 'application/json,text/plain,*/*',
-      'User-Agent': 'RebootRadioDiscordBot/1.0',
-    },
-  });
-
-  const body = await response.text();
-  const payload = body.includes('{') ? extractJsonFromMixedBody(body) : JSON.parse(body);
-
-  if (!response.ok) {
-    throw new Error(`Fetch user request failed: ${response.status} ${response.statusText}`);
-  }
-
-  return payload;
-}
-
-async function syncLinkedRoles(member, apiRoles) {
+async function syncLinkedRoles(member, apiRoles, apiFeatures = []) {
   const roleIdsToAdd = new Set();
   const mappedRoleIds = new Set(Object.values(linkedRoleMap).filter(Boolean));
+  const managedFeatureRoleIds = new Set(Object.values(featureRoleMap).filter(Boolean));
 
   for (const roleNumber of apiRoles) {
     const mappedRoleId = linkedRoleMap[String(roleNumber)];
+    if (mappedRoleId) {
+      roleIdsToAdd.add(mappedRoleId);
+    }
+  }
+
+  for (const featureSlug of apiFeatures) {
+    const mappedRoleId = featureRoleMap[String(featureSlug)];
     if (mappedRoleId) {
       roleIdsToAdd.add(mappedRoleId);
     }
@@ -507,7 +460,7 @@ async function syncLinkedRoles(member, apiRoles) {
 
   const currentRoleIds = new Set(member.roles.cache.map((role) => role.id));
 
-  const mappedManagedIds = new Set(mappedRoleIds);
+  const mappedManagedIds = new Set([...mappedRoleIds, ...managedFeatureRoleIds]);
   if (STAFF_ROLE_ID) mappedManagedIds.add(STAFF_ROLE_ID);
   if (MEMBER_ROLE_ID) mappedManagedIds.add(MEMBER_ROLE_ID);
 
@@ -540,13 +493,14 @@ async function runVerify(interaction) {
     const result = await fetchLinkedUser(interaction.user.id);
 
     if (!result?.found) {
-      await interaction.editReply('No linked RebootRadio account found. Please link your Discord account on the RebootRadio website first.');
+      await interaction.editReply(`No linked RebootRadio account found. Link your Discord account in Settings first: ${SETTINGS_URL}`);
       return;
     }
 
     const apiRoles = Array.isArray(result.roles) ? result.roles.map((value) => String(value)) : [];
+    const apiFeatures = Array.isArray(result.features) ? result.features.map((value) => String(value)) : [];
     const member = await interaction.guild.members.fetch(interaction.user.id);
-    const syncResult = await syncLinkedRoles(member, apiRoles);
+    const syncResult = await syncLinkedRoles(member, apiRoles, apiFeatures);
 
     await interaction.editReply(`Verification successful. Role sync complete. Added: ${syncResult.added}, Removed: ${syncResult.removed}.`);
   } catch (error) {
@@ -636,26 +590,27 @@ async function runPresenter(interaction) {
   }
 }
 
-async function fetchScheduleSlots(offset = 0) {
-  const response = await fetch(SCHEDULE_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      Accept: '*/*',
-      'Accept-Encoding': 'deflate, gzip',
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36',
-    },
-    body: new URLSearchParams({ offset: String(offset) }).toString(),
-  });
+async function runStations(interaction) {
+  await interaction.deferReply({ ephemeral: true });
 
-  const body = await response.text();
-  const payload = body.includes('{') ? extractJsonFromMixedBody(body) : JSON.parse(body);
+  try {
+    const stations = await fetchStations();
+    if (stations.length === 0) {
+      await interaction.editReply('No stations are configured on RebootRadio right now.');
+      return;
+    }
 
-  if (!response.ok) {
-    throw new Error(`Schedule request failed: ${response.status} ${response.statusText}`);
+    const lines = stations.map((station) => {
+      const isDefault = String(station.is_default) === '1' || station.is_default === 1 || station.is_default === true;
+      const label = isDefault ? `${station.name} (default)` : station.name;
+      return `• ${label}${station.stream_url ? `\n  Stream: ${station.stream_url}` : ''}`;
+    });
+
+    await interaction.editReply(`**RebootRadio stations**\n${lines.join('\n')}`);
+  } catch (error) {
+    console.error('Stations command failed:', error);
+    await interaction.editReply('Could not fetch stations right now.');
   }
-
-  return toSlotArray(payload);
 }
 
 async function loadScheduleState() {
@@ -904,6 +859,21 @@ async function stopStreaming(interaction) {
 client.on('clientReady', async () => {
   console.log(`Logged in as ${client.user.tag}`);
 
+  if (!activeStreamUrl) {
+    try {
+      activeStreamUrl = await resolveStreamUrl();
+      if (activeStreamUrl) {
+        console.log(`Resolved stream URL from stations API: ${activeStreamUrl}`);
+      }
+    } catch (error) {
+      console.error('Failed to resolve stream URL from stations API:', error);
+    }
+  }
+
+  if (!activeStreamUrl) {
+    throw new Error('Missing RADIO_STREAM_URL and no default station stream could be resolved.');
+  }
+
   await loadScheduleState();
 
   for (const guild of client.guilds.cache.values()) {
@@ -963,6 +933,11 @@ client.on('interactionCreate', async (interaction) => {
 
   if (interaction.commandName === 'presenter') {
     await runPresenter(interaction);
+    return;
+  }
+
+  if (interaction.commandName === 'stations') {
+    await runStations(interaction);
     return;
   }
 
