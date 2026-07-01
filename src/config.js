@@ -18,7 +18,7 @@ export const SITE_BASE_URL = trimSlash(process.env.SITE_BASE_URL || 'https://reb
 export const STATION_SLUG = String(process.env.STATION_SLUG || '').trim();
 export const TARGET_GUILD_ID = process.env.TARGET_GUILD_ID || '1470711513097568389';
 export const SCHEDULE_CHANNEL_NAME = process.env.SCHEDULE_CHANNEL_NAME || 'schedule';
-export const STREAM_USER_AGENT = process.env.STREAM_USER_AGENT || 'RebootRadioBotByRebootMedia Group';
+export const STREAM_USER_AGENT = process.env.STREAM_USER_AGENT || 'Reboot Radio Bot by Reboot Media Group';
 export const PRESENCE_UPDATE_INTERVAL_MS = Number(process.env.PRESENCE_UPDATE_INTERVAL_MS || 60_000);
 
 export const RADIO_STREAM_URL = process.env.RADIO_STREAM_URL || '';
@@ -69,7 +69,7 @@ export async function fetchJson(url, options = {}) {
     ...options,
     headers: {
       Accept: 'application/json,text/plain,*/*',
-      'User-Agent': 'RebootRadioDiscordBot/1.1',
+      'User-Agent': 'Reboot Radio Discord Bot/1.2',
       ...(options.headers || {}),
     },
   });

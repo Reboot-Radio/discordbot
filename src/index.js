@@ -256,15 +256,15 @@ const slashCommands = [
   new SlashCommandBuilder().setName('play').setDescription('Join your voice channel and play the radio stream.'),
   new SlashCommandBuilder().setName('stop').setDescription('Stop streaming and leave the voice channel.'),
   new SlashCommandBuilder().setName('nowplaying').setDescription('Show current now-playing info from stats API.'),
-  new SlashCommandBuilder().setName('verify').setDescription('Verify your RebootRadio account and sync linked roles.'),
+  new SlashCommandBuilder().setName('verify').setDescription('Verify your Reboot Radio account and sync linked roles.'),
   new SlashCommandBuilder().setName('presenter').setDescription('Show live presenter and next 2 slots.'),
-  new SlashCommandBuilder().setName('stations').setDescription('List available RebootRadio stations.'),
+  new SlashCommandBuilder().setName('stations').setDescription('List available Reboot Radio stations.'),
 ].map((command) => command.toJSON());
 
 function buildNowPlayingEmbed(stats) {
   const display = parseStatsDisplay(stats);
   const embed = new EmbedBuilder()
-    .setTitle('RebootRadio — Now Playing')
+    .setTitle('Reboot Radio — Now Playing')
     .setColor(display.isLive ? 0xff3355 : 0xff0055)
     .setTimestamp();
 
@@ -469,7 +469,7 @@ function createSchedulePng(slots, liveSlot) {
   const height = topPadding + bottomPadding + usableSlots.length * rowHeight;
   const canvas = createCanvas(width, height, [11, 11, 18, 255]);
 
-  drawText(canvas, 24, 18, 'REBOOTRADIO SCHEDULE', [255, 255, 255, 255], 3, 26);
+  drawText(canvas, 24, 18, 'REBOOT RADIO SCHEDULE', [255, 255, 255, 255], 3, 26);
   drawText(canvas, 24, 58, 'LIVE SLOT FROM EUROPE/LONDON TIME', [184, 184, 200, 255], 2, 42);
 
   usableSlots.forEach((_, index) => {
@@ -544,7 +544,7 @@ async function syncLinkedRoles(member, apiRoles, apiFeatures = []) {
 async function runVerify(interaction) {
   if (interaction.guildId !== TARGET_GUILD_ID) {
     await interaction.reply({
-      content: 'Linked role verification is only available in the official RebootRadio server.',
+      content: 'Linked role verification is only available in the official Reboot Radio server.',
       ephemeral: true,
     });
     return;
@@ -556,7 +556,7 @@ async function runVerify(interaction) {
     const result = await fetchLinkedUser(interaction.user.id);
 
     if (!result?.found) {
-      await interaction.editReply(`No linked RebootRadio account found. Link your Discord account in Settings first: ${SETTINGS_URL}`);
+      await interaction.editReply(`No linked Reboot Radio account found. Link your Discord account in Settings first: ${SETTINGS_URL}`);
       return;
     }
 
@@ -659,7 +659,7 @@ async function runStations(interaction) {
   try {
     const stations = await fetchStations();
     if (stations.length === 0) {
-      await interaction.editReply('No stations are configured on RebootRadio right now.');
+      await interaction.editReply('No stations are configured on Reboot Radio right now.');
       return;
     }
 
@@ -669,7 +669,7 @@ async function runStations(interaction) {
       return `• ${label}${station.stream_url ? `\n  Stream: ${station.stream_url}` : ''}`;
     });
 
-    await interaction.editReply(`**RebootRadio stations**\n${lines.join('\n')}`);
+    await interaction.editReply(`**Reboot Radio stations**\n${lines.join('\n')}`);
   } catch (error) {
     console.error('Stations command failed:', error);
     await interaction.editReply('Could not fetch stations right now.');
@@ -918,7 +918,7 @@ async function joinAndPlay(interaction) {
     player.play(resource);
     voiceConnections.set(interaction.guildId, connection);
 
-    await respondToInteraction(interaction, `Connected to **${channel.name}** and streaming your station.`);
+    await respondToInteraction(interaction, `Connected to **${channel.name}** and playing Reboot Radio.`);
   } catch (error) {
     safeDestroyGuildVoice(interaction.guildId);
 
