@@ -810,26 +810,8 @@ async function respondToInteraction(interaction, payload) {
 }
 
 
-function bindVoiceConnectionHandlers(connection, guildId) {
-  let wasReady = false;
-
-  connection.on('error', (error) => {
-    console.error(`Voice connection error (${guildId}):`, error);
-  });
-
-  connection.on('stateChange', async (oldState, newState) => {
-    if (newState.status === VoiceConnectionStatus.Ready) {
-      wasReady = true;
-    }
-
-    if (oldState.status !== newState.status) {
-      console.log(`Voice state (${guildId}): ${oldState.status} -> ${newState.status}`);
-    }
-
-    if (!wasReady || newState.status !== VoiceConnectionStatus.Disconnected) {
-      return;
-    }
-
+function bindVoiceReconnectHandler(connection, guildId) {
+  connection.on(VoiceConnectionStatus.Disconnected, async (_oldState, newState) => {
     if (newState.reason === VoiceConnectionDisconnectReason.WebSocketClose && newState.closeCode === 4014) {
       safeDestroyGuildVoice(guildId);
       return;
@@ -842,7 +824,7 @@ function bindVoiceConnectionHandlers(connection, guildId) {
         entersState(connection, VoiceConnectionStatus.Ready, 5_000),
       ]);
     } catch {
-      if (connection.state.status !== VoiceConnectionStatus.Disconnected) {
+      if (connection.state.status === VoiceConnectionStatus.Destroyed) {
         return;
       }
 
@@ -868,6 +850,7 @@ async function establishVoiceConnection(channel) {
 
   try {
     safeDestroyGuildVoice(guildId);
+    await new Promise((resolve) => setTimeout(resolve, 250));
 
     const connection = joinVoiceChannel({
       channelId: channel.id,
@@ -875,23 +858,29 @@ async function establishVoiceConnection(channel) {
       adapterCreator: channel.guild.voiceAdapterCreator,
       selfDeaf: true,
       selfMute: false,
+      debug: process.env.VOICE_DEBUG === 'true',
     });
 
-    bindVoiceConnectionHandlers(connection, guildId);
+    connection.on('error', (error) => {
+      console.error(`Voice connection error (${guildId}):`, error);
+    });
 
-    try {
-      await entersState(connection, VoiceConnectionStatus.Ready, 30_000);
-      return connection;
-    } catch (firstError) {
-      try {
-        connection.rejoin();
-        await entersState(connection, VoiceConnectionStatus.Ready, 45_000);
-        return connection;
-      } catch (secondError) {
-        safeDestroyGuildVoice(guildId);
-        throw secondError || firstError;
+    connection.on('stateChange', (oldState, newState) => {
+      if (oldState.status === newState.status) {
+        return;
       }
-    }
+
+      let extra = '';
+      if (newState.status === VoiceConnectionStatus.Disconnected) {
+        extra = ` reason=${newState.reason ?? 'unknown'} code=${newState.closeCode ?? 'n/a'}`;
+      }
+
+      console.log(`Voice state (${guildId}): ${oldState.status} -> ${newState.status}${extra}`);
+    });
+
+    await entersState(connection, VoiceConnectionStatus.Ready, 20_000);
+    bindVoiceReconnectHandler(connection, guildId);
+    return connection;
   } finally {
     joiningGuilds.delete(guildId);
   }
@@ -940,7 +929,7 @@ async function joinAndPlay(interaction) {
     console.error(`Failed to join or stream (${interaction.guildId}):`, briefError);
     await respondToInteraction(
       interaction,
-      `I could not connect or play the station: ${briefError}. Check bot voice permissions, UDP/voice networking on the host, ffmpeg, and voice encryption dependencies.`,
+      `I could not connect or play the station: ${briefError}. Discord now requires DAVE voice encryption — ensure @snazzah/davey installed (npm install), bot has Connect/Speak permissions, and outbound UDP is allowed on the server.`,
     );
   }
 }
@@ -1062,6 +1051,13 @@ client.on('interactionCreate', async (interaction) => {
 });
 
 async function startBot() {
+  try {
+    await import('@snazzah/davey');
+    console.log('Voice DAVE: @snazzah/davey loaded');
+  } catch (error) {
+    console.error('Failed to load @snazzah/davey (required for Discord voice since DAVE E2EE):', error);
+  }
+
   console.log(generateDependencyReport());
   await client.login(DISCORD_TOKEN);
 }
