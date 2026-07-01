@@ -1062,14 +1062,6 @@ client.on('interactionCreate', async (interaction) => {
 });
 
 async function startBot() {
-  try {
-    const sodium = await import('libsodium-wrappers');
-    await sodium.default.ready;
-    console.log('Voice encryption: libsodium-wrappers ready');
-  } catch (error) {
-    console.warn('libsodium-wrappers could not be loaded:', error);
-  }
-
   console.log(generateDependencyReport());
   await client.login(DISCORD_TOKEN);
 }
