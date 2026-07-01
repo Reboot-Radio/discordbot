@@ -8,6 +8,7 @@ import {
   createAudioPlayer,
   createAudioResource,
   entersState,
+  getVoiceConnection,
   joinVoiceChannel,
 } from '@discordjs/voice';
 import {
@@ -114,13 +115,8 @@ const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates, GatewayIntentBits.GuildMembers],
 });
 
-const player = createAudioPlayer({
-  behaviors: {
-    noSubscriber: NoSubscriberBehavior.Pause,
-  },
-});
-
 const voiceConnections = new Map();
+const audioPlayers = new Map();
 const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
 
 const linkedRoleMap = LINKED_ROLE_MAP;
@@ -156,10 +152,17 @@ function createFfmpegAudioResource(guildId) {
     '-hide_banner',
     '-loglevel',
     'warning',
+    '-reconnect',
+    '1',
+    '-reconnect_streamed',
+    '1',
+    '-reconnect_delay_max',
+    '5',
     '-user_agent',
     STREAM_USER_AGENT,
     '-i',
     RADIO_STREAM_URL || activeStreamUrl,
+    '-vn',
     '-f',
     's16le',
     '-ar',
@@ -186,7 +189,56 @@ function createFfmpegAudioResource(guildId) {
 
   return createAudioResource(ffmpeg.stdout, {
     inputType: StreamType.Raw,
+    inlineVolume: false,
   });
+}
+
+function getGuildPlayer(guildId) {
+  if (audioPlayers.has(guildId)) {
+    return audioPlayers.get(guildId);
+  }
+
+  const player = createAudioPlayer({
+    behaviors: {
+      noSubscriber: NoSubscriberBehavior.Play,
+    },
+  });
+
+  player.on(AudioPlayerStatus.Idle, () => {
+    const connection = voiceConnections.get(guildId);
+    if (!connection || connection.state.status !== VoiceConnectionStatus.Ready) {
+      return;
+    }
+
+    try {
+      player.play(createFfmpegAudioResource(guildId));
+    } catch (error) {
+      console.error(`Failed to restart stream for guild ${guildId}:`, error);
+    }
+  });
+
+  audioPlayers.set(guildId, player);
+  return player;
+}
+
+function destroyGuildVoice(guildId) {
+  const player = audioPlayers.get(guildId);
+  if (player) {
+    player.stop(true);
+  }
+
+  stopGuildFfmpeg(guildId);
+
+  const tracked = voiceConnections.get(guildId);
+  if (tracked) {
+    tracked.destroy();
+    voiceConnections.delete(guildId);
+  }
+
+  const existing = getVoiceConnection(guildId);
+  if (existing) {
+    existing.destroy();
+  }
 }
 
 const slashCommands = [
@@ -738,42 +790,60 @@ async function respondToInteraction(interaction, payload) {
 }
 
 
-function stabilizeVoiceConnection(connection, guildId) {
+function bindVoiceConnectionHandlers(connection, guildId) {
   connection.on('error', (error) => {
     console.error(`Voice connection error (${guildId}):`, error);
   });
 
-  connection.on('stateChange', (oldState, newState) => {
-    const networking = Reflect.get(newState, 'networking');
-    const udp = networking?.udp;
-
-    if (udp?.keepAliveInterval) {
-      clearInterval(udp.keepAliveInterval);
-      udp.keepAliveInterval = null;
-    }
-
-    if (newState.status === VoiceConnectionStatus.Disconnected) {
-      if (newState.reason === VoiceConnectionDisconnectReason.WebSocketClose && newState.closeCode === 4014) {
-        connection.destroy();
-        voiceConnections.delete(guildId);
-      }
-    }
-
+  connection.on('stateChange', async (oldState, newState) => {
     if (oldState.status !== newState.status) {
       console.log(`Voice state (${guildId}): ${oldState.status} -> ${newState.status}`);
+    }
+
+    if (newState.status !== VoiceConnectionStatus.Disconnected) {
+      return;
+    }
+
+    if (newState.reason === VoiceConnectionDisconnectReason.WebSocketClose && newState.closeCode === 4014) {
+      destroyGuildVoice(guildId);
+      return;
+    }
+
+    try {
+      await Promise.race([
+        entersState(connection, VoiceConnectionStatus.Signalling, 5_000),
+        entersState(connection, VoiceConnectionStatus.Connecting, 5_000),
+        entersState(connection, VoiceConnectionStatus.Ready, 5_000),
+      ]);
+    } catch {
+      if (connection.state.status !== VoiceConnectionStatus.Disconnected) {
+        return;
+      }
+
+      try {
+        await entersState(connection, VoiceConnectionStatus.Connecting, 15_000);
+        await entersState(connection, VoiceConnectionStatus.Ready, 20_000);
+      } catch (error) {
+        console.error(`Voice reconnect failed (${guildId}):`, error);
+        destroyGuildVoice(guildId);
+      }
     }
   });
 }
 
 async function establishVoiceConnection(channel) {
+  const guildId = channel.guild.id;
+  destroyGuildVoice(guildId);
+
   const connection = joinVoiceChannel({
     channelId: channel.id,
-    guildId: channel.guild.id,
+    guildId,
     adapterCreator: channel.guild.voiceAdapterCreator,
     selfDeaf: true,
+    selfMute: false,
   });
 
-  stabilizeVoiceConnection(connection, channel.guild.id);
+  bindVoiceConnectionHandlers(connection, guildId);
 
   try {
     await entersState(connection, VoiceConnectionStatus.Ready, 30_000);
@@ -781,7 +851,7 @@ async function establishVoiceConnection(channel) {
   } catch (firstError) {
     try {
       connection.rejoin();
-      await entersState(connection, VoiceConnectionStatus.Ready, 30_000);
+      await entersState(connection, VoiceConnectionStatus.Ready, 45_000);
       return connection;
     } catch (secondError) {
       connection.destroy();
@@ -802,7 +872,8 @@ async function joinAndPlay(interaction) {
     return;
   }
 
-  const existingConnection = voiceConnections.get(interaction.guildId);
+  const existingConnection = voiceConnections.get(interaction.guildId)
+    || getVoiceConnection(interaction.guildId);
   if (existingConnection && existingConnection.state.status !== VoiceConnectionStatus.Destroyed) {
     await respondToInteraction(interaction, {
       content: 'Already connected and playing. Use `/stop` first if you want me to reconnect.',
@@ -814,19 +885,16 @@ async function joinAndPlay(interaction) {
 
   try {
     connection = await establishVoiceConnection(channel);
-
+    const player = getGuildPlayer(interaction.guildId);
     const resource = createFfmpegAudioResource(interaction.guildId);
 
-    player.play(resource);
     connection.subscribe(player);
+    player.play(resource);
     voiceConnections.set(interaction.guildId, connection);
 
     await respondToInteraction(interaction, `Connected to **${channel.name}** and streaming your station.`);
   } catch (error) {
-    if (connection) {
-      connection.destroy();
-    }
-    voiceConnections.delete(interaction.guildId);
+    destroyGuildVoice(interaction.guildId);
 
     const briefError = error?.code === 'ABORT_ERR'
       ? 'Voice gateway timed out while connecting.'
@@ -841,18 +909,15 @@ async function joinAndPlay(interaction) {
 }
 
 async function stopStreaming(interaction) {
-  const connection = voiceConnections.get(interaction.guildId);
+  const guildId = interaction.guildId;
+  const hadConnection = voiceConnections.has(guildId) || getVoiceConnection(guildId);
 
-  if (!connection) {
+  if (!hadConnection) {
     await interaction.reply({ content: 'I am not connected in this server.', ephemeral: true });
     return;
   }
 
-  player.stop(true);
-  stopGuildFfmpeg(interaction.guildId);
-  connection.destroy();
-  voiceConnections.delete(interaction.guildId);
-
+  destroyGuildVoice(guildId);
   await interaction.reply('Stopped stream and left voice channel.');
 }
 
@@ -954,19 +1019,6 @@ client.on('interactionCreate', async (interaction) => {
         await interaction.editReply('Could not fetch now playing stats right now.');
       } else {
         await interaction.reply('Could not fetch now playing stats right now.');
-      }
-    }
-  }
-});
-
-player.on(AudioPlayerStatus.Idle, () => {
-  for (const [guildId, connection] of voiceConnections) {
-    if (connection.state.status === VoiceConnectionStatus.Ready) {
-      try {
-        connection.subscribe(player);
-        player.play(createFfmpegAudioResource(guildId));
-      } catch (error) {
-        console.error(`Failed to restart stream for guild ${guildId}:`, error);
       }
     }
   }
