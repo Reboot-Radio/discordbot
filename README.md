@@ -62,6 +62,8 @@ cp .env.example .env
 npm start
 ```
 
+`libsodium-wrappers` is required for Discord voice encryption on hosts without `aes-256-gcm`. On startup the bot logs `generateDependencyReport()` — if encryption shows as missing, voice will not connect.
+
 ## Environment variables
 
 | Variable | Required | Description |
