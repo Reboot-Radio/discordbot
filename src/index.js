@@ -8,6 +8,7 @@ import {
   createAudioPlayer,
   createAudioResource,
   entersState,
+  generateDependencyReport,
   getVoiceConnection,
   joinVoiceChannel,
 } from '@discordjs/voice';
@@ -117,6 +118,7 @@ const client = new Client({
 
 const voiceConnections = new Map();
 const audioPlayers = new Map();
+const joiningGuilds = new Set();
 const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
 
 const linkedRoleMap = LINKED_ROLE_MAP;
@@ -221,23 +223,32 @@ function getGuildPlayer(guildId) {
   return player;
 }
 
-function destroyGuildVoice(guildId) {
+function safeDestroyGuildVoice(guildId) {
+  voiceConnections.delete(guildId);
+
   const player = audioPlayers.get(guildId);
   if (player) {
-    player.stop(true);
+    try {
+      player.stop(true);
+    } catch (error) {
+      console.error(`Failed to stop audio player (${guildId}):`, error);
+    }
   }
 
   stopGuildFfmpeg(guildId);
 
-  const tracked = voiceConnections.get(guildId);
-  if (tracked) {
-    tracked.destroy();
-    voiceConnections.delete(guildId);
+  const connection = getVoiceConnection(guildId);
+  if (!connection || connection.state.status === VoiceConnectionStatus.Destroyed) {
+    return;
   }
 
-  const existing = getVoiceConnection(guildId);
-  if (existing) {
-    existing.destroy();
+  try {
+    connection.destroy();
+  } catch (error) {
+    const message = String(error?.message || error);
+    if (!message.includes('already been destroyed')) {
+      console.error(`Failed to destroy voice connection (${guildId}):`, error);
+    }
   }
 }
 
@@ -785,27 +796,42 @@ async function respondToInteraction(interaction, payload) {
       await interaction.reply(responsePayload);
     }
   } catch (error) {
+    if (error?.code === 10008 || error?.code === 10062) {
+      try {
+        await interaction.followUp({ ...responsePayload, ephemeral: true });
+      } catch (followUpError) {
+        console.error('Failed to follow up to interaction:', followUpError);
+      }
+      return;
+    }
+
     console.error('Failed to respond to interaction:', error);
   }
 }
 
 
 function bindVoiceConnectionHandlers(connection, guildId) {
+  let wasReady = false;
+
   connection.on('error', (error) => {
     console.error(`Voice connection error (${guildId}):`, error);
   });
 
   connection.on('stateChange', async (oldState, newState) => {
+    if (newState.status === VoiceConnectionStatus.Ready) {
+      wasReady = true;
+    }
+
     if (oldState.status !== newState.status) {
       console.log(`Voice state (${guildId}): ${oldState.status} -> ${newState.status}`);
     }
 
-    if (newState.status !== VoiceConnectionStatus.Disconnected) {
+    if (!wasReady || newState.status !== VoiceConnectionStatus.Disconnected) {
       return;
     }
 
     if (newState.reason === VoiceConnectionDisconnectReason.WebSocketClose && newState.closeCode === 4014) {
-      destroyGuildVoice(guildId);
+      safeDestroyGuildVoice(guildId);
       return;
     }
 
@@ -825,7 +851,7 @@ function bindVoiceConnectionHandlers(connection, guildId) {
         await entersState(connection, VoiceConnectionStatus.Ready, 20_000);
       } catch (error) {
         console.error(`Voice reconnect failed (${guildId}):`, error);
-        destroyGuildVoice(guildId);
+        safeDestroyGuildVoice(guildId);
       }
     }
   });
@@ -833,30 +859,41 @@ function bindVoiceConnectionHandlers(connection, guildId) {
 
 async function establishVoiceConnection(channel) {
   const guildId = channel.guild.id;
-  destroyGuildVoice(guildId);
 
-  const connection = joinVoiceChannel({
-    channelId: channel.id,
-    guildId,
-    adapterCreator: channel.guild.voiceAdapterCreator,
-    selfDeaf: true,
-    selfMute: false,
-  });
+  if (joiningGuilds.has(guildId)) {
+    throw new Error('A voice connection is already being established for this server.');
+  }
 
-  bindVoiceConnectionHandlers(connection, guildId);
+  joiningGuilds.add(guildId);
 
   try {
-    await entersState(connection, VoiceConnectionStatus.Ready, 30_000);
-    return connection;
-  } catch (firstError) {
+    safeDestroyGuildVoice(guildId);
+
+    const connection = joinVoiceChannel({
+      channelId: channel.id,
+      guildId,
+      adapterCreator: channel.guild.voiceAdapterCreator,
+      selfDeaf: true,
+      selfMute: false,
+    });
+
+    bindVoiceConnectionHandlers(connection, guildId);
+
     try {
-      connection.rejoin();
-      await entersState(connection, VoiceConnectionStatus.Ready, 45_000);
+      await entersState(connection, VoiceConnectionStatus.Ready, 30_000);
       return connection;
-    } catch (secondError) {
-      connection.destroy();
-      throw secondError || firstError;
+    } catch (firstError) {
+      try {
+        connection.rejoin();
+        await entersState(connection, VoiceConnectionStatus.Ready, 45_000);
+        return connection;
+      } catch (secondError) {
+        safeDestroyGuildVoice(guildId);
+        throw secondError || firstError;
+      }
     }
+  } finally {
+    joiningGuilds.delete(guildId);
   }
 }
 
@@ -894,16 +931,16 @@ async function joinAndPlay(interaction) {
 
     await respondToInteraction(interaction, `Connected to **${channel.name}** and streaming your station.`);
   } catch (error) {
-    destroyGuildVoice(interaction.guildId);
+    safeDestroyGuildVoice(interaction.guildId);
 
     const briefError = error?.code === 'ABORT_ERR'
       ? 'Voice gateway timed out while connecting.'
       : error?.message || 'Unknown connection error';
 
-    console.error(`Failed to join or stream (${interaction.guildId}): ${briefError}`);
+    console.error(`Failed to join or stream (${interaction.guildId}):`, briefError);
     await respondToInteraction(
       interaction,
-      'I could not connect/play the station (voice connection timeout). Check bot voice permissions, UDP/voice networking on host, and ffmpeg availability.',
+      `I could not connect or play the station: ${briefError}. Check bot voice permissions, UDP/voice networking on the host, ffmpeg, and voice encryption dependencies.`,
     );
   }
 }
@@ -917,7 +954,7 @@ async function stopStreaming(interaction) {
     return;
   }
 
-  destroyGuildVoice(guildId);
+  safeDestroyGuildVoice(guildId);
   await interaction.reply('Stopped stream and left voice channel.');
 }
 
@@ -1024,4 +1061,20 @@ client.on('interactionCreate', async (interaction) => {
   }
 });
 
-client.login(DISCORD_TOKEN);
+async function startBot() {
+  try {
+    const sodium = await import('libsodium-wrappers');
+    await sodium.default.ready;
+    console.log('Voice encryption: libsodium-wrappers ready');
+  } catch (error) {
+    console.warn('libsodium-wrappers could not be loaded:', error);
+  }
+
+  console.log(generateDependencyReport());
+  await client.login(DISCORD_TOKEN);
+}
+
+startBot().catch((error) => {
+  console.error('Bot failed to start:', error);
+  process.exit(1);
+});
