@@ -1,76 +1,90 @@
 # RebootRadio Discord Bot
 
-A Discord bot that can:
+A Discord bot for the [Reboot Radio v3](https://rebootradio.uk/v3/) site.
 
-- Join your voice channel and play your radio stream.
-- Show now playing stats from `https://rebootradio.uk/v3/api/stats`.
-- Auto-update bot status to: `PRESENTER Playing SONG By ARTIST`.
-- Parse stats JSON even when the endpoint includes PHP warning HTML before the JSON body.
-- Auto-register slash commands per server, including when the bot joins a new server.
-- In guild `1470711513097568389`, auto-create `#schedule`, post a schedule PNG, and keep it updated.
-- Verify users against RebootRadio and sync linked Discord roles with `/verify`.
+## Features
+
+- Join voice and play the station stream (`/play`, `/stop`)
+- Show now playing from the v3 stats API (`/nowplaying`)
+- Live presence text from stats, including live presenter mode
+- Auto schedule channel image in the official guild
+- Linked account verification and role sync (`/verify`)
+- Presenter lineup image (`/presenter`)
+- List configured stations (`/stations`)
 
 ## Slash commands
 
-- `/play` — join your current voice channel and start streaming.
-- `/stop` — stop and leave voice channel.
-- `/nowplaying` — show now playing data in an embed.
-- `/verify` — check `fetchUser?discord_id=<id>` and sync linked roles in the official server.
-- `/presenter` — generate and send only the lineup image (no embed, no extra text).
+- `/play` — join your voice channel and stream the radio
+- `/stop` — stop and leave voice
+- `/nowplaying` — embed with track, presenter, station, and artwork
+- `/verify` — sync Discord roles from linked RebootRadio account
+- `/presenter` — live presenter + next two slots image
+- `/stations` — list stations from `/api/stations`
 
-## Special schedule automation
+## v3 API integration
 
-For guild `1470711513097568389`:
+The bot reads from the current v3 API surface:
 
-- Bot sends `POST` to `https://rebootradio.uk/v3/api/getDaySlots` with form body `offset=0` (`application/x-www-form-urlencoded`).
-- Bot creates a `#schedule` text channel if needed.
-- Bot posts/edits one persistent message with a generated `schedule.png` image.
-- Channel ID and message ID are stored permanently in `data/schedule-state.json`.
-- Bot checks every minute; if timetable data changes or the live hour changes (Europe/London), it updates the message.
-- Slot content is shifted back by 1 while hour labels stay unchanged (e.g. old 13:00 content now appears on 12:00).
-- On startup, a manual check runs immediately.
+| Endpoint | Use |
+|----------|-----|
+| `GET /api/stats` | Now playing, live/offline state, artwork |
+| `POST /api/getDaySlots` | Schedule and presenter commands |
+| `GET /api/fetchUser?discord_id=` | `/verify` role sync |
+| `GET /api/stations` | Station list and default stream URL fallback |
 
-## Linked role verification
+Set `SITE_BASE_URL` once (default `https://rebootradio.uk/v3`). Individual API URLs are derived automatically unless overridden.
 
-In the official RebootRadio guild only (`1470711513097568389`):
+### Stats format
 
-- `/verify` sends a GET request to:
-  - `https://rebootradio.uk/v3/api/fetchUser?discord_id=<DISCORD_USER_ID>`
-- If `found` is `false`, the bot tells the user to link on the RebootRadio website.
-- If `found` is `true`:
-  - all mapped numeric roles from `roles[]` are added,
-  - mapped roles not present in `roles[]` are removed,
-  - unmapped numbers are ignored,
-  - role `0` grants `STAFF_ROLE_ID`,
-  - any found user also gets `MEMBER_ROLE_ID`.
+The bot supports the current stats payload, including:
+
+- `presenter`, `song`
+- `meta.stream.is_live`, `meta.stream.is_offline`, `meta.stream.station`
+- relative artwork paths such as `avatars/default.png` (resolved against `SITE_BASE_URL`)
+
+### Verify / role sync
+
+`/verify` calls `fetchUser` and syncs:
+
+- numeric `roles[]` via `LINKED_ROLE_MAP_JSON`
+- optional `features[]` slugs via `FEATURE_ROLE_MAP_JSON` (e.g. `radio_visualizer`)
+- `STAFF_ROLE_ID` when role `0` is present
+- `MEMBER_ROLE_ID` for any linked account
+
+Users who are not linked are directed to **Settings** on the site to connect Discord.
 
 ## Setup
-
-1. Create a Discord bot in the Developer Portal.
-2. Invite bot with permissions: View Channels, Send Messages, Connect, Speak, Manage Channels, Manage Roles.
-3. Install dependencies and configure env.
 
 ```bash
 npm install
 cp .env.example .env
-# edit .env with your token + stream URL
+# edit .env
 npm start
 ```
 
 ## Environment variables
 
-- `DISCORD_TOKEN` (required)
-- `RADIO_STREAM_URL` (required)
-- `STATS_URL` (optional, defaults to `https://rebootradio.uk/v3/api/stats`)
-- `SCHEDULE_URL` (optional, defaults to `https://rebootradio.uk/v3/api/getDaySlots`)
-- `FETCH_USER_URL` (optional, defaults to `https://rebootradio.uk/v3/api/fetchUser`)
-- `LINKED_ROLE_MAP_JSON` (optional, JSON map of numeric role code to Discord role ID, e.g. `{"1":"123...","3":"456..."}`)
-- `STAFF_ROLE_ID` (optional, assigned when API role `0` is present)
-- `MEMBER_ROLE_ID` (optional, assigned whenever API `found` is true)
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `DISCORD_TOKEN` | Yes | Discord bot token |
+| `SITE_BASE_URL` | No | Site root, default `https://rebootradio.uk/v3` |
+| `RADIO_STREAM_URL` | No* | Stream URL; falls back to default station from `/api/stations` |
+| `STATION_SLUG` | No | Adds `?station=` to stats requests |
+| `TARGET_GUILD_ID` | No | Guild for schedule automation and `/verify` |
+| `LINKED_ROLE_MAP_JSON` | No | Map site role numbers to Discord role IDs |
+| `FEATURE_ROLE_MAP_JSON` | No | Map feature slugs to Discord role IDs |
+| `STAFF_ROLE_ID` | No | Staff role when API role `0` is present |
+| `MEMBER_ROLE_ID` | No | Role granted to verified linked users |
+
+\* Either `RADIO_STREAM_URL` or a default station with `stream_url` from the API is required.
 
 ## Notes
 
-- Schedule image is generated as PNG in-process (no external image library dependency).
-- Stream playback uses FFmpeg piping with custom user-agent `RebootRadioBotByRebootMedia Group`.
-- Voice join now retries with extended readiness timeout (20s then 45s) to reduce intermittent `AbortError` failures on slower hosts/networks.
-- If stream playback fails on your host, install FFmpeg and ensure Opus libraries are available.
+- Schedule PNG is generated in-process (no image library dependency).
+- Stream playback uses FFmpeg with user-agent `RebootRadioBotByRebootMedia Group`.
+- Voice join retries with extended readiness timeout to reduce intermittent connection failures.
+- Install FFmpeg on the host running the bot.
+
+## Site dependency
+
+`/verify` requires `api/routes/fetchUser.php` on the site to use the shared app database connection and return `found`, `roles`, and optionally `features` for linked users.
