@@ -54,10 +54,11 @@ export function memberIsAdmin(member) {
 }
 
 export function getMainServerStageBlockMessage() {
-  return [
-    'The bot stays on the **Reboot Radio stage** in this server and cannot be moved with `/play` or `/stop`.',
-    'Join the stage channel to listen live.',
-  ].join('\n');
+  const stageLink = STAGE_CHANNEL_ID
+    ? `<#${STAGE_CHANNEL_ID}>`
+    : 'the stage channel';
+
+  return `Woah, i love reboot as much as the next guy but you cant run that command in the main server because it messes up the stage setup, however you can come and listen in the stage: ${stageLink}`;
 }
 
 function getVoiceApi(deps) {
