@@ -29,6 +29,23 @@ export const FEATURE_ROLE_MAP = parseJsonEnv('FEATURE_ROLE_MAP_JSON', {});
 export const STAFF_ROLE_ID = process.env.STAFF_ROLE_ID || '';
 export const MEMBER_ROLE_ID = process.env.MEMBER_ROLE_ID || '';
 
+export const STAGE_CHANNEL_ID = process.env.STAGE_CHANNEL_ID || '';
+export const STAGE_TITLE = process.env.STAGE_TITLE || 'Reboot Radio — Live 24/7';
+
+function parseEnvBool(value, defaultValue = true) {
+  if (value === undefined || value === '') {
+    return defaultValue;
+  }
+
+  return value !== 'false' && value !== '0';
+}
+
+export let STAGE_247_ENABLED = parseEnvBool(process.env.STAGE_247_ENABLED, true);
+
+export function setStage247Enabled(enabled) {
+  STAGE_247_ENABLED = enabled;
+}
+
 export function apiUrl(route) {
   const path = String(route || '').replace(/^\//, '');
   return `${SITE_BASE_URL}/api/${path}`;

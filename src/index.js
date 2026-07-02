@@ -39,9 +39,23 @@ import {
   SCHEDULE_CHANNEL_NAME,
   SETTINGS_URL,
   STAFF_ROLE_ID,
+  STAGE_247_ENABLED,
   STREAM_USER_AGENT,
   TARGET_GUILD_ID,
 } from './config.js';
+import {
+  bindStage247ConnectionHandlers,
+  getMainServerStageBlockMessage,
+  handleBotVoiceStateUpdate,
+  isStage247Active,
+  isStage247Configured,
+  memberIsAdmin,
+  scheduleStage247Recovery,
+  startStage247,
+  stopStage247,
+  toggleStage247,
+  updateStageTitle,
+} from './stage247.js';
 import {
   buildPresenceText,
   fetchLinkedUser,
@@ -216,6 +230,9 @@ function getGuildPlayer(guildId) {
       player.play(createFfmpegAudioResource(guildId));
     } catch (error) {
       console.error(`Failed to restart stream for guild ${guildId}:`, error);
+      if (isStage247Active(guildId)) {
+        scheduleStage247Recovery(client, getStage247Deps());
+      }
     }
   });
 
@@ -259,7 +276,28 @@ const slashCommands = [
   new SlashCommandBuilder().setName('verify').setDescription('Verify your Reboot Radio account and sync linked roles.'),
   new SlashCommandBuilder().setName('presenter').setDescription('Show live presenter and next 2 slots.'),
   new SlashCommandBuilder().setName('stations').setDescription('List available Reboot Radio stations.'),
+  new SlashCommandBuilder()
+    .setName('stage-title')
+    .setDescription('Set the main server stage title (admin only).')
+    .addStringOption((option) => option
+      .setName('title')
+      .setDescription('Stage title (1-120 characters)')
+      .setRequired(true)
+      .setMaxLength(120)),
+  new SlashCommandBuilder()
+    .setName('247-toggle')
+    .setDescription('Toggle 24/7 stage streaming in the main server (admin only).'),
 ].map((command) => command.toJSON());
+
+function getStage247Deps() {
+  return {
+    establishVoiceConnection,
+    getGuildPlayer,
+    createFfmpegAudioResource,
+    safeDestroyGuildVoice,
+    voiceConnections,
+  };
+}
 
 function buildNowPlayingEmbed(stats) {
   const display = parseStatsDisplay(stats);
@@ -814,6 +852,9 @@ function bindVoiceReconnectHandler(connection, guildId) {
   connection.on(VoiceConnectionStatus.Disconnected, async (_oldState, newState) => {
     if (newState.reason === VoiceConnectionDisconnectReason.WebSocketClose && newState.closeCode === 4014) {
       safeDestroyGuildVoice(guildId);
+      if (isStage247Active(guildId)) {
+        scheduleStage247Recovery(client, getStage247Deps());
+      }
       return;
     }
 
@@ -834,6 +875,9 @@ function bindVoiceReconnectHandler(connection, guildId) {
       } catch (error) {
         console.error(`Voice reconnect failed (${guildId}):`, error);
         safeDestroyGuildVoice(guildId);
+        if (isStage247Active(guildId)) {
+          scheduleStage247Recovery(client, getStage247Deps());
+        }
       }
     }
   });
@@ -880,6 +924,7 @@ async function establishVoiceConnection(channel) {
 
     await entersState(connection, VoiceConnectionStatus.Ready, 20_000);
     bindVoiceReconnectHandler(connection, guildId);
+    bindStage247ConnectionHandlers(connection, client, getStage247Deps());
     return connection;
   } finally {
     joiningGuilds.delete(guildId);
@@ -887,6 +932,14 @@ async function establishVoiceConnection(channel) {
 }
 
 async function joinAndPlay(interaction) {
+  if (isStage247Active(interaction.guildId)) {
+    await interaction.reply({
+      content: getMainServerStageBlockMessage(),
+      ephemeral: true,
+    });
+    return;
+  }
+
   await interaction.deferReply();
 
   const channel = interaction.member?.voice?.channel;
@@ -935,6 +988,14 @@ async function joinAndPlay(interaction) {
 }
 
 async function stopStreaming(interaction) {
+  if (isStage247Active(interaction.guildId)) {
+    await interaction.reply({
+      content: getMainServerStageBlockMessage(),
+      ephemeral: true,
+    });
+    return;
+  }
+
   const guildId = interaction.guildId;
   const hadConnection = voiceConnections.has(guildId) || getVoiceConnection(guildId);
 
@@ -985,6 +1046,19 @@ client.on('clientReady', async () => {
   await updateBotPresence();
   startPresenceUpdater();
   startScheduleWatcher();
+
+  if (isStage247Configured() && STAGE_247_ENABLED) {
+    try {
+      await startStage247(client, getStage247Deps());
+    } catch (error) {
+      console.error('Stage 24/7 startup failed:', error);
+      scheduleStage247Recovery(client, getStage247Deps());
+    }
+  }
+});
+
+client.on('voiceStateUpdate', (oldState, newState) => {
+  handleBotVoiceStateUpdate(oldState, newState, client, getStage247Deps());
 });
 
 client.on('guildCreate', async (guild) => {
@@ -1046,6 +1120,70 @@ client.on('interactionCreate', async (interaction) => {
       } else {
         await interaction.reply('Could not fetch now playing stats right now.');
       }
+    }
+    return;
+  }
+
+  if (interaction.commandName === 'stage-title') {
+    if (interaction.guildId !== TARGET_GUILD_ID) {
+      await interaction.reply({
+        content: 'This command is only available in the official Reboot Radio server.',
+        ephemeral: true,
+      });
+      return;
+    }
+
+    if (!memberIsAdmin(interaction.member)) {
+      await interaction.reply({ content: 'You need admin permissions to use this command.', ephemeral: true });
+      return;
+    }
+
+    const title = interaction.options.getString('title', true);
+
+    try {
+      const updatedTitle = await updateStageTitle(client, getStage247Deps(), title);
+      await interaction.reply({
+        content: `Stage title updated to **${updatedTitle}**.`,
+        ephemeral: true,
+      });
+    } catch (error) {
+      console.error('stage-title command failed:', error);
+      await interaction.reply({
+        content: error?.message || 'Could not update the stage title right now.',
+        ephemeral: true,
+      });
+    }
+    return;
+  }
+
+  if (interaction.commandName === '247-toggle') {
+    if (interaction.guildId !== TARGET_GUILD_ID) {
+      await interaction.reply({
+        content: 'This command is only available in the official Reboot Radio server.',
+        ephemeral: true,
+      });
+      return;
+    }
+
+    if (!memberIsAdmin(interaction.member)) {
+      await interaction.reply({ content: 'You need admin permissions to use this command.', ephemeral: true });
+      return;
+    }
+
+    await interaction.deferReply({ ephemeral: true });
+
+    try {
+      const nextEnabled = !STAGE_247_ENABLED;
+      const result = await toggleStage247(client, getStage247Deps(), nextEnabled);
+
+      if (result === 'enabled') {
+        await interaction.editReply('24/7 stage streaming is now **enabled**. The bot has joined the stage and started playing.');
+      } else {
+        await interaction.editReply('24/7 stage streaming is now **disabled**. The stage has ended and the bot has left voice.');
+      }
+    } catch (error) {
+      console.error('247-toggle command failed:', error);
+      await interaction.editReply('Could not toggle 24/7 stage streaming right now.');
     }
   }
 });
