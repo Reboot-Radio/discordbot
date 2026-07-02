@@ -1,4 +1,4 @@
-# RebootRadio Discord Bot
+# Reboot Radio Discord Bot
 
 A Discord bot for the [Reboot Radio v3](https://rebootradio.uk/v3/) site.
 
@@ -11,15 +11,20 @@ A Discord bot for the [Reboot Radio v3](https://rebootradio.uk/v3/) site.
 - Linked account verification and role sync (`/verify`)
 - Presenter lineup image (`/presenter`)
 - List configured stations (`/stations`)
+- **24/7 stage streaming** in the official guild (joins a configured stage channel, starts a stage, and plays continuously)
 
 ## Slash commands
 
 - `/play` — join your voice channel and stream the radio
 - `/stop` — stop and leave voice
 - `/nowplaying` — embed with track, presenter, station, and artwork
-- `/verify` — sync Discord roles from linked RebootRadio account
+- `/verify` — sync Discord roles from linked Reboot Radio account
 - `/presenter` — live presenter + next two slots image
 - `/stations` — list stations from `/api/stations`
+- `/stage-title` — admin: set the main server stage title (persisted in `.env`)
+- `/247-toggle` — admin: enable or disable 24/7 stage streaming (persisted in `.env`)
+
+In the official guild while 24/7 stage mode is on, `/play` and `/stop` are blocked. Users are prompted to join the stage channel to listen.
 
 ## v3 API integration
 
@@ -77,15 +82,40 @@ npm start
 | `FEATURE_ROLE_MAP_JSON` | No | Map feature slugs to Discord role IDs |
 | `STAFF_ROLE_ID` | No | Staff role when API role `0` is present |
 | `MEMBER_ROLE_ID` | No | Role granted to verified linked users |
+| `STAGE_CHANNEL_ID` | No* | Stage channel ID for 24/7 streaming in the official guild |
+| `STAGE_TITLE` | No | Stage topic/title, default `Reboot Radio — Live 24/7` |
+| `STAGE_247_ENABLED` | No | `true`/`false`, default `true`; persisted when toggled via `/247-toggle` |
 
 \* Either `RADIO_STREAM_URL` or a default station with `stream_url` from the API is required.
+
+\*\* Set `STAGE_CHANNEL_ID` to enable 24/7 stage mode. The bot needs **Connect**, **Speak**, and **Manage Channels** (or stage moderator) in that stage channel.
+
+## Role mapping setup
+
+Run the interactive mapper (updates only `LINKED_ROLE_MAP_JSON`, `FEATURE_ROLE_MAP_JSON`, `STAFF_ROLE_ID`, and `MEMBER_ROLE_ID` in your existing `.env`):
+
+```bash
+npm run setup-roles
+```
+
+For the full username list with Discord IDs, add database credentials to `.env` (optional, setup script only):
+
+```
+SITE_DB_HOST=localhost
+SITE_DB_USER=reboot
+SITE_DB_PASSWORD=your_password
+SITE_DB_NAME=reboot_panel
+```
+
+Without `SITE_DB_*`, the script uses the built-in usergroups list and loads usernames from the public `searchCommunity` API (Discord IDs won't be shown).
 
 ## Notes
 
 - Schedule PNG is generated in-process (no image library dependency).
-- Stream playback uses FFmpeg with user-agent `RebootRadioBotByRebootMedia Group`.
+- Stream playback uses FFmpeg with user-agent `Reboot Radio Bot by Reboot Media Group`.
 - Voice join retries with extended readiness timeout to reduce intermittent connection failures.
 - Install FFmpeg on the host running the bot.
+- 24/7 stage mode auto-rejoins if the bot is moved, kicked, disconnected, or the stream ends. Admins can disable it with `/247-toggle`; the setting survives restarts via `.env`.
 
 ## Site dependency
 
